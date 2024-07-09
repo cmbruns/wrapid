@@ -14,7 +14,6 @@ class TranslationUnitDeclaration(Declaration):
         )
         cursor = tu.cursor
         super().__init__(cursor)
-        assert cursor.kind == CursorKind.TRANSLATION_UNIT
         self.structs = []
         # Only store declarations from this file
         file_name = str(cursor.spelling)
