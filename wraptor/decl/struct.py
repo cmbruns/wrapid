@@ -8,7 +8,8 @@ class StructDeclaration(Declaration):
     def __init__(self, cursor: Cursor):
         super().__init__(cursor)
         assert cursor.kind == CursorKind.STRUCT_DECL
-        self.name = cursor.spelling
+        if len(self.name) < 1:
+            self.name = cursor.type.spelling
         self.fields = []
         for c in cursor.get_children():
             if c.kind == CursorKind.FIELD_DECL:

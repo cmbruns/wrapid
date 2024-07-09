@@ -19,6 +19,10 @@ class ModuleBuilder(object):
                     return struct
         raise ValueError(f"class '{name}' not found")
 
+    def declarations(self):
+        for tu in self.translation_units:
+            yield from tu.declarations()
+
 
 __all__ = [
     "ModuleBuilder",

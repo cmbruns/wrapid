@@ -1,4 +1,4 @@
-from clang.cindex import CursorKind, Index, TranslationUnit
+from clang.cindex import CursorKind, Index, TranslationUnit, TypeKind
 
 import wraptor.decl.clang_lib_loader  # noqa
 from wraptor.decl.declaration import Declaration
@@ -23,4 +23,12 @@ class TranslationUnitDeclaration(Declaration):
                 continue  # Don't leave this file
             if child.kind == CursorKind.STRUCT_DECL:
                 self.structs.append(StructDeclaration(child))
+            elif child.kind == CursorKind.TYPEDEF_DECL:
+                utt = child.underlying_typedef_type
+                if utt.kind == TypeKind.ELABORATED:
+                    x = 3
             # TODO: other declaration
+
+    def declarations(self):
+        for decl in self.structs:
+            yield decl

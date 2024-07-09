@@ -10,3 +10,6 @@ class Declaration(object):
     def include(self):
         self._include = True
         # TODO: include children and parents recursively (but not siblings)
+
+    def included(self) -> bool:
+        return self._include
