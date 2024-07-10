@@ -20,9 +20,14 @@ class CTypesCodeGenerator(object):
             coder = coder_for_cursor_kind[cursor.kind]
             for line in coder(cursor, 0, module_index):
                 body_lines.append(line)
+        # import statements
         for line in module_index.import_code():
             print(line, file=file)
+        # main body of code
         for line in body_lines:
+            print(line, file=file)
+        # __all__ stanza
+        for line in module_index.all_section_code():
             print(line, file=file)
 
 
@@ -32,6 +37,10 @@ class ModuleIndex(object):
     """
     def __init__(self):
         self.imports = dict()
+        self.all_section_cursors = set()
+
+    def add_all_cursor(self, cursor):
+        self.all_section_cursors.add(cursor)
 
     def set_import(self, import_module: str, import_name: str):
         """
@@ -42,8 +51,20 @@ class ModuleIndex(object):
         self.imports[import_module].add(import_name)
 
     def import_code(self):
+        if not self.imports:
+            return
         for module in self.imports:
             yield f"from {module} import {', '.join(self.imports[module])}"
+
+    def all_section_code(self):
+        if not self.all_section_cursors:
+            return
+        yield ""
+        yield "__all__ = ["
+        for cursor in self.all_section_cursors:
+            yield f'    "{name_for_cursor(cursor)}",'
+        yield "]"
+        yield ""
 
 
 def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None):
@@ -95,6 +116,12 @@ def field_code(field_cursor: Cursor, indent=8, module_index=None):
     yield i+f'("{field_name}", {type_name}),'  # TODO: more work on types
 
 
+def add_to_all(module_index: Optional[ModuleIndex], cursor: Cursor):
+    if module_index is None:
+        return
+    module_index.add_all_cursor(cursor)
+
+
 def index_import(module_index: Optional[ModuleIndex], import_module: str, import_name: str):
     if module_index is None:
         return
@@ -105,8 +132,10 @@ def struct_code(cursor: Cursor, indent=0, module_index=None):
     assert cursor.kind == CursorKind.STRUCT_DECL
     i = indent * " "
     name = name_for_cursor(cursor)
+    yield ""
     yield i+f"class {name}(Structure):"
     index_import(module_index, "ctypes", "Structure")
+    add_to_all(module_index, cursor)
     fields = []
     for child in cursor.get_children():
         if child.kind == CursorKind.FIELD_DECL:
@@ -118,12 +147,15 @@ def struct_code(cursor: Cursor, indent=0, module_index=None):
         yield i + f"    )"
     else:
         yield i+"    pass"
+    yield ""
 
 
 def typedef_code(cursor: Cursor, indent=0, module_index=None):
     i = indent * " "
     name = name_for_cursor(cursor)
     base_type = ctypes_name_for_clang_type(cursor.underlying_typedef_type, module_index)
+    add_to_all(module_index, cursor)
+    yield ""
     yield i+f"{name} = {base_type}"
 
 
