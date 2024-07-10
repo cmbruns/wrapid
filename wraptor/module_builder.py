@@ -1,35 +1,79 @@
-from wraptor.decl.translation_unit import TranslationUnitDeclaration
+from clang.cindex import Index, Cursor, CursorKind, TranslationUnit
+from .decl import clang_lib_loader  # noqa
+
+
+def name_for_cursor(cursor: Cursor):
+    if cursor.kind == CursorKind.STRUCT_DECL:
+        # Workaround for anonymous structs
+        if len(cursor.spelling) < 1:
+            return cursor.type.spelling
+    return cursor.spelling
+
+
+class CursorWrapper(object):
+    """Thin wrapper around a clang cursor with methods to help set wrapping state"""
+    def __init__(self, cursor, included_cursors: set):
+        self.cursor = cursor
+        self.included_cursors = included_cursors
+
+    def __getattr__(self, method_name):
+        """Delegate unknown methods to contained cursor"""
+        return getattr(self.cursor, method_name)
+
+    def include(self):
+        self.included_cursors.add(self.cursor.hash)
+
+    def is_included(self):
+        return self.cursor.hash in self.included_cursors
+
+
+def all_filter(cursor):
+    return True
 
 
 class ModuleBuilder(object):
     def __init__(self, file_paths, compiler_args=None):
+        self.included_cursors = set()
         self.translation_units = []
-        self.structs = []
-        for path in file_paths:
-            self.translation_units.append(TranslationUnitDeclaration(
-                file_path=path,
-                compiler_args=compiler_args,
-            ))
+        for file_path in file_paths:
+            tu = Index.create().parse(
+                path=file_path,
+                args=compiler_args,
+                options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+            )
+            self.translation_units.append(tu)
 
-    def class_(self, name: str):
-        """Returns a declaration by name"""
+    def cursors(self, criteria=all_filter):
+        """Top level cursors"""
         for tu in self.translation_units:
-            for struct in tu.structs:
-                if struct.name == name:
-                    return struct
-        raise ValueError(f"class '{name}' not found")
+            for cursor in filter(criteria, tu.cursor.get_children()):
+                yield CursorWrapper(cursor, self.included_cursors)
+
+    def _singleton_cursor(self, criteria) -> CursorWrapper:
+        """Query expected to return exactly one cursor"""
+        result = None
+        for index, cursor in enumerate(self.cursors(criteria)):
+            if index == 0:
+                result = cursor
+            elif index == 1:
+                raise RuntimeError("multiple matches")
+        if result is None:
+            raise RuntimeError("no matches")
+        return result
+
+    def struct(self, name: str) -> CursorWrapper:
+        return self._singleton_cursor(
+            lambda c:
+                c.kind == CursorKind.STRUCT_DECL
+                and name_for_cursor(c) == name
+        )
 
     def typedef(self, name: str):
-        """Returns a declaration by name"""
-        for tu in self.translation_units:
-            for typedef in tu.typedefs:
-                if typedef.name == name:
-                    return typedef
-        raise ValueError(f"typedef '{name}' not found")
-
-    def declarations(self):
-        for tu in self.translation_units:
-            yield from tu.declarations
+        return self._singleton_cursor(
+            lambda c:
+                c.kind == CursorKind.TYPEDEF_DECL
+                and name_for_cursor(c) == name
+        )
 
 
 __all__ = [

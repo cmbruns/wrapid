@@ -4,6 +4,7 @@ import clang.cindex
 from clang.cindex import Cursor, CursorKind, TypeKind
 
 from wraptor import ModuleBuilder
+from wraptor.module_builder import name_for_cursor
 
 
 class CTypesCodeGenerator(object):
@@ -13,11 +14,11 @@ class CTypesCodeGenerator(object):
     def write_module(self, file):
         module_index = ModuleIndex()
         body_lines = []
-        for decl in self.module_builder.declarations():
-            if not decl.included():
+        for cursor in self.module_builder.cursors():
+            if not cursor.is_included():
                 continue
-            coder = coder_for_cursor_kind[decl.cursor.kind]
-            for line in coder(decl.cursor, 0, module_index):
+            coder = coder_for_cursor_kind[cursor.kind]
+            for line in coder(cursor, 0, module_index):
                 body_lines.append(line)
         for line in module_index.import_code():
             print(line, file=file)
@@ -43,14 +44,6 @@ class ModuleIndex(object):
     def import_code(self):
         for module in self.imports:
             yield f"from {module} import {', '.join(self.imports[module])}"
-
-
-def ctypes_name_for_cursor(cursor: Cursor):
-    if cursor.kind == CursorKind.STRUCT_DECL:
-        # Workaround for anonymous structs
-        if len(cursor.spelling) < 1:
-            return cursor.type.spelling
-    return cursor.spelling
 
 
 def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None):
@@ -97,7 +90,7 @@ def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None)
 def field_code(field_cursor: Cursor, indent=8, module_index=None):
     i = indent * " "
     assert field_cursor.kind == CursorKind.FIELD_DECL
-    field_name = ctypes_name_for_cursor(field_cursor)
+    field_name = name_for_cursor(field_cursor)
     type_name = ctypes_name_for_clang_type(field_cursor.type, module_index)
     yield i+f'("{field_name}", {type_name}),'  # TODO: more work on types
 
@@ -111,7 +104,7 @@ def index_import(module_index: Optional[ModuleIndex], import_module: str, import
 def struct_code(cursor: Cursor, indent=0, module_index=None):
     assert cursor.kind == CursorKind.STRUCT_DECL
     i = indent * " "
-    name = ctypes_name_for_cursor(cursor)
+    name = name_for_cursor(cursor)
     yield i+f"class {name}(Structure):"
     index_import(module_index, "ctypes", "Structure")
     fields = []
@@ -129,7 +122,7 @@ def struct_code(cursor: Cursor, indent=0, module_index=None):
 
 def typedef_code(cursor: Cursor, indent=0, module_index=None):
     i = indent * " "
-    name = ctypes_name_for_cursor(cursor)
+    name = name_for_cursor(cursor)
     base_type = ctypes_name_for_clang_type(cursor.underlying_typedef_type, module_index)
     yield i+f"{name} = {base_type}"
 
