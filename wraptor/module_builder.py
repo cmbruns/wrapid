@@ -1,5 +1,5 @@
 from clang.cindex import Index, Cursor, CursorKind, TranslationUnit
-from .decl import clang_lib_loader  # noqa
+from .lib import clang_lib_loader  # noqa
 
 
 def name_for_cursor(cursor: Cursor):
