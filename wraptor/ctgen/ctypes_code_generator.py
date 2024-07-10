@@ -1,5 +1,6 @@
 from wraptor import ModuleBuilder
 from wraptor.decl.struct import StructDeclaration
+from wraptor.decl.typedef import TypeDefDeclaration
 
 
 class CTypesCodeGenerator(object):
@@ -32,8 +33,14 @@ def struct_code(struct: StructDeclaration, indent=0):
         yield i+"    pass"
 
 
+def typedef_code(typedef: TypeDefDeclaration, indent=0):
+    i = indent * " "
+    yield i+f"{typedef.name} = {typedef.base_type.clang_type.spelling}"
+
+
 coder_map = {
     StructDeclaration: struct_code,
+    TypeDefDeclaration: typedef_code,
 }
 
 __all__ = [

@@ -19,9 +19,17 @@ class ModuleBuilder(object):
                     return struct
         raise ValueError(f"class '{name}' not found")
 
+    def typedef(self, name: str):
+        """Returns a declaration by name"""
+        for tu in self.translation_units:
+            for typedef in tu.typedefs:
+                if typedef.name == name:
+                    return typedef
+        raise ValueError(f"typedef '{name}' not found")
+
     def declarations(self):
         for tu in self.translation_units:
-            yield from tu.declarations()
+            yield from tu.declarations
 
 
 __all__ = [
