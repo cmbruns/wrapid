@@ -58,6 +58,10 @@ def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None)
     Recursive function to build up complex type names piece by piece
     """
     # TODO: maybe replace wraptor type_for_clang_type
+    if clang_type.kind in primitive_ctype_for_clang_type:
+        t = primitive_ctype_for_clang_type[clang_type.kind]
+        index_import(module_index, "ctypes", t)
+        return t
     if clang_type.kind == TypeKind.CONSTANTARRAY:
         element_type = ctypes_name_for_clang_type(clang_type.element_type, module_index)
         # TODO: element_count may or may not be a constant macro
@@ -71,8 +75,21 @@ def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None)
         return f"CFUNCTYPE({result_type}, {', '.join(arg_types)})"
     elif clang_type.kind == TypeKind.POINTER:
         pointee = clang_type.get_pointee()
-        index_import(module_index, "ctypes", "POINTER")
-        return f"POINTER({ctypes_name_for_clang_type(pointee, module_index)})"
+        if pointee.kind in [TypeKind.CHAR_S, TypeKind.SCHAR]:
+            t = "c_char_p"
+            index_import(module_index, "ctypes", t)
+            return t
+        elif pointee.kind == TypeKind.WCHAR:
+            t = "c_wchar_p"
+            index_import(module_index, "ctypes", t)
+            return t
+        elif pointee.kind == TypeKind.VOID:
+            t = "c_void_p"
+            index_import(module_index, "ctypes", t)
+            return t
+        else:
+            index_import(module_index, "ctypes", "POINTER")
+            return f"POINTER({ctypes_name_for_clang_type(pointee, module_index)})"
     else:
         return clang_type.spelling
 
@@ -120,6 +137,26 @@ def typedef_code(cursor: Cursor, indent=0, module_index=None):
 coder_for_cursor_kind = {
     CursorKind.STRUCT_DECL: struct_code,
     CursorKind.TYPEDEF_DECL: typedef_code,
+}
+
+primitive_ctype_for_clang_type = {
+    TypeKind.BOOL: "c_bool",
+    TypeKind.CHAR_S: "c_char",
+    TypeKind.CHAR_U: "c_ubyte",
+    TypeKind.DOUBLE: "c_double",
+    TypeKind.FLOAT: "c_float",
+    TypeKind.INT: "c_int",
+    TypeKind.LONG: "c_long",
+    TypeKind.LONGDOUBLE: "c_longdouble",
+    TypeKind.LONGLONG: "c_longlong",
+    TypeKind.SCHAR: "c_char",
+    TypeKind.SHORT: "c_short",
+    TypeKind.UCHAR: "c_ubyte",
+    TypeKind.UINT: "c_uint",
+    TypeKind.ULONG: "c_ulong",
+    TypeKind.ULONGLONG: "c_ulonglong",
+    TypeKind.USHORT: "c_ushort",
+    TypeKind.WCHAR: "c_wchar",
 }
 
 __all__ = [
