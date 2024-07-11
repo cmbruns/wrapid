@@ -145,25 +145,28 @@ def _py_comment_from_token(token: Token):
     return comment
 
 
-def right_comment(cursor) -> str:
+def right_comment(cursor, module_index) -> str:
     """
     Find end-of-line comment on the same line as the declaration.
     :param cursor: ctypes Cursor object representing the declaration.
     :return: either the empty string, or a two-space padded python comment
     """
-    tu = cursor.translation_unit
+    if module_index is None:
+        return ""
+    tu_ix = module_index.comment_index.get(cursor.translation_unit, None)
+    if tu_ix is None:
+        return ""
     loc_end = cursor.extent.end
-    line = loc_end.line
-    file = loc_end.file
-    column = loc_end.column
-    start = SourceLocation.from_position(tu, file, line, column)
-    end = SourceLocation.from_position(tu, file, line + 1, 1)
-    extent = SourceRange.from_locations(start, end)
-    comment = ""
-    for token in tu.get_tokens(extent=extent):
-        if token.kind == TokenKind.COMMENT and token.location.line == line:
-            comment = f"  {_py_comment_from_token(token)}"
-            break
+    file_ix = tu_ix.get(loc_end.file.name, None)
+    if file_ix is None:
+        return ""
+    # Right comment must end on the same line as the cursor ends.
+    line_ix = file_ix["start_line"].get(loc_end.line, None)
+    if line_ix is None:
+        return ""
+    assert len(line_ix) == 1
+    token = line_ix[0]
+    comment = f"  {_py_comment_from_token(token)}"
     return comment
 
 
@@ -189,7 +192,7 @@ def above_comment(cursor, module_index) -> str:
         return ""
     assert len(line_ix) == 1
     token = line_ix[0]
-    comment = f"{_py_comment_from_token(token)}"
+    comment = _py_comment_from_token(token)
     return comment
 
 
@@ -199,7 +202,7 @@ def field_code(cursor: Cursor, indent=8, module_index=None):
     field_name = name_for_cursor(cursor)
     type_name = ctypes_name_for_clang_type(cursor.type, module_index)
     a_comment = above_comment(cursor, module_index)
-    r_comment = right_comment(cursor)
+    r_comment = right_comment(cursor, module_index)
     if len(a_comment) > 0:
         for line in a_comment.splitlines():
             yield i + line
