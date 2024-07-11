@@ -1,7 +1,14 @@
 from typing import Optional
 
-import clang.cindex
-from clang.cindex import Cursor, CursorKind, TypeKind
+from clang.cindex import Type as ClangType
+from clang.cindex import (
+    Cursor,
+    CursorKind,
+    SourceLocation,
+    SourceRange,
+    TokenKind,
+    TypeKind,
+)
 
 from wraptor import ModuleBuilder
 from wraptor.module_builder import name_for_cursor
@@ -67,7 +74,7 @@ class ModuleIndex(object):
         yield ""
 
 
-def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None):
+def ctypes_name_for_clang_type(clang_type: ClangType, module_index=None):
     """
     Recursive function to build up complex type names piece by piece
     """
@@ -108,12 +115,44 @@ def ctypes_name_for_clang_type(clang_type: clang.cindex.Type, module_index=None)
         return clang_type.spelling
 
 
-def field_code(field_cursor: Cursor, indent=8, module_index=None):
+def _py_comment_from_c_comment(c_comment: str):
+    c = c_comment
+    c = c.strip()  # whitespace
+    c = c.strip("/")  # "//" or half of "/* */" comment delimiter
+    c = c.strip("*")  # other half of "/* */" comment delimiter
+    c = c.strip()  # whitespace again
+    return f"# {c}"  # TODO: assumes one-line comment
+
+
+def right_comment(cursor) -> str:
+    """
+    Find end-of-line comment on the same line as the declaration.
+    :param cursor: ctypes Cursor object representing the declaration.
+    :return: either the empty string, or a two-space padded python comment
+    """
+    tu = cursor.translation_unit
+    loc_end = cursor.extent.end
+    line = loc_end.line
+    file = loc_end.file
+    column = loc_end.column
+    start = SourceLocation.from_position(tu, file, line, column)
+    end = SourceLocation.from_position(tu, file, line + 1, 1)
+    extent = SourceRange.from_locations(start, end)
+    comment = ""
+    for token in tu.get_tokens(extent=extent):
+        if token.kind == TokenKind.COMMENT and token.location.line == line:
+            comment = f"  {_py_comment_from_c_comment(token.spelling)}"
+            break
+    return comment
+
+
+def field_code(cursor: Cursor, indent=8, module_index=None):
     i = indent * " "
-    assert field_cursor.kind == CursorKind.FIELD_DECL
-    field_name = name_for_cursor(field_cursor)
-    type_name = ctypes_name_for_clang_type(field_cursor.type, module_index)
-    yield i+f'("{field_name}", {type_name}),'  # TODO: more work on types
+    assert cursor.kind == CursorKind.FIELD_DECL
+    field_name = name_for_cursor(cursor)
+    type_name = ctypes_name_for_clang_type(cursor.type, module_index)
+    r_comment = right_comment(cursor)
+    yield i+f'("{field_name}", {type_name}),{r_comment}'
 
 
 def add_to_all(module_index: Optional[ModuleIndex], cursor: Cursor):
