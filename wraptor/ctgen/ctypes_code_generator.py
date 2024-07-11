@@ -170,30 +170,33 @@ def right_comment(cursor, module_index) -> str:
     return comment
 
 
-def above_comment(cursor, module_index) -> str:
+def above_comment(cursor, indent: int, module_index) -> str:
     """
     Find comments directly above a declaration in the source file.
     :param cursor: ctypes Cursor object representing the declaration.
+    :param indent: number of spaces cursor is indented in the output
     :param module_index: ModuleIndex object containing ancillary parsing information.
     :return: either the empty string, or a python comment string
     """
     if module_index is None:
-        return ""
+        return
     tu_ix = module_index.comment_index.get(cursor.translation_unit, None)
     if tu_ix is None:
-        return ""
+        return
     loc_start = cursor.extent.start
     file_ix = tu_ix.get(loc_start.file.name, None)
     if file_ix is None:
-        return ""
+        return
     # Above comment must end on the line before the cursor begins.
     line_ix = file_ix["end_line"].get(loc_start.line - 1, None)
     if line_ix is None:
-        return ""
+        return
     assert len(line_ix) == 1
     token = line_ix[0]
     comment = _py_comment_from_token(token)
-    return comment
+    i = " " * indent
+    for line in comment.splitlines():
+        yield i + line
 
 
 def field_code(cursor: Cursor, indent=8, module_index=None):
@@ -201,11 +204,8 @@ def field_code(cursor: Cursor, indent=8, module_index=None):
     assert cursor.kind == CursorKind.FIELD_DECL
     field_name = name_for_cursor(cursor)
     type_name = ctypes_name_for_clang_type(cursor.type, module_index)
-    a_comment = above_comment(cursor, module_index)
+    yield from above_comment(cursor, indent, module_index)
     r_comment = right_comment(cursor, module_index)
-    if len(a_comment) > 0:
-        for line in a_comment.splitlines():
-            yield i + line
     yield i+f'("{field_name}", {type_name}),{r_comment}'
 
 
@@ -249,7 +249,9 @@ def typedef_code(cursor: Cursor, indent=0, module_index=None):
     base_type = ctypes_name_for_clang_type(cursor.underlying_typedef_type, module_index)
     add_to_all(module_index, cursor)
     yield ""
-    yield i+f"{name} = {base_type}"
+    yield from above_comment(cursor, indent, module_index)
+    r_comment = right_comment(cursor, module_index)
+    yield i+f"{name} = {base_type}{r_comment}"
 
 
 coder_for_cursor_kind = {
