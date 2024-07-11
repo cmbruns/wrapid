@@ -1,5 +1,5 @@
 from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
-from .lib import clang_lib_loader  # noqa
+from wraptor.lib import clang_lib_loader  # noqa
 
 
 def name_for_cursor(cursor: Cursor):
@@ -101,6 +101,7 @@ class ModuleBuilder(object):
 
 __all__ = [
     "ModuleBuilder",
+    "name_for_cursor",
 ]
 
 if __name__ == "__main__":

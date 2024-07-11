@@ -5,8 +5,6 @@ from clang.cindex import Type as ClangType
 from clang.cindex import (
     Cursor,
     CursorKind,
-    SourceLocation,
-    SourceRange,
     Token,
     TokenKind,
     TypeKind,
