@@ -1,4 +1,4 @@
-from clang.cindex import Index, Cursor, CursorKind, TranslationUnit
+from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
 from .lib import clang_lib_loader  # noqa
 
 
@@ -27,7 +27,7 @@ class CursorWrapper(object):
         return self.cursor.hash in self.included_cursors
 
 
-def all_filter(cursor):
+def all_filter(_cursor):
     return True
 
 
@@ -35,13 +35,21 @@ class ModuleBuilder(object):
     def __init__(self, file_paths, compiler_args=None):
         self.included_cursors = set()
         self.translation_units = []
+        self.tu_comments = []
         for file_path in file_paths:
             tu = Index.create().parse(
                 path=file_path,
                 args=compiler_args,
-                options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+                options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
+                | TranslationUnit.PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION,
             )
             self.translation_units.append(tu)
+            # Store the comments for later alignment to the cursors maybe
+            comments = []
+            for tok in tu.cursor.get_tokens():
+                if tok.kind == TokenKind.COMMENT:
+                    comments.append(tok)
+            self.tu_comments.append(comments)
 
     def cursors(self, criteria=all_filter):
         """Top level cursors"""
@@ -84,5 +92,5 @@ if __name__ == "__main__":
     mb = ModuleBuilder(
         file_paths=["C:/Users/cmbruns/Documents/git/libjpeg-turbo/jpeglib.h"],
     )
-    jpeg_compress_struct = mb.class_("jpeg_compress_struct")
+    jpeg_compress_struct = mb.struct("jpeg_compress_struct")
     jpeg_compress_struct.include()
