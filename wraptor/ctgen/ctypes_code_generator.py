@@ -1,3 +1,4 @@
+import inspect
 from typing import Optional
 
 from clang.cindex import Type as ClangType
@@ -6,6 +7,7 @@ from clang.cindex import (
     CursorKind,
     SourceLocation,
     SourceRange,
+    Token,
     TokenKind,
     TypeKind,
 )
@@ -20,6 +22,7 @@ class CTypesCodeGenerator(object):
 
     def write_module(self, file):
         module_index = ModuleIndex()
+        module_index.comment_index = self.module_builder.comment_index
         body_lines = []
         for cursor in self.module_builder.cursors():
             if not cursor.is_included():
@@ -115,13 +118,31 @@ def ctypes_name_for_clang_type(clang_type: ClangType, module_index=None):
         return clang_type.spelling
 
 
-def _py_comment_from_c_comment(c_comment: str):
-    c = c_comment
-    c = c.strip()  # whitespace
-    c = c.strip("/")  # "//" or half of "/* */" comment delimiter
-    c = c.strip("*")  # other half of "/* */" comment delimiter
-    c = c.strip()  # whitespace again
-    return f"# {c}"  # TODO: assumes one-line comment
+def _py_comment_from_token(token: Token):
+    assert token.kind == TokenKind.COMMENT
+    column = token.location.column
+    c = token.spelling
+    is_star_comment = False
+    if c.startswith("/*"):
+        is_star_comment = True
+        c = c.removeprefix("/*")
+        c = c.removesuffix("*/")
+    elif c.startswith("//"):
+        c = c.removeprefix("//")
+    # Pad first line so multiple lines align
+    pad = " " * (column - 1)
+    c = pad + c
+    lines = []
+    for index, line in enumerate(c.splitlines()):
+        if is_star_comment and index > 0:
+            if line.startswith(pad + " *"):
+                line = pad + "  " + line.removeprefix(pad + " *")
+        lines.append(line)
+    # Remove whitespace in a multiline-aware way
+    comment = inspect.cleandoc("\n".join(lines))
+    # Insert python comment character
+    comment = "\n".join([f"# {c}" for c in comment.splitlines()])
+    return comment
 
 
 def right_comment(cursor) -> str:
@@ -141,8 +162,34 @@ def right_comment(cursor) -> str:
     comment = ""
     for token in tu.get_tokens(extent=extent):
         if token.kind == TokenKind.COMMENT and token.location.line == line:
-            comment = f"  {_py_comment_from_c_comment(token.spelling)}"
+            comment = f"  {_py_comment_from_token(token)}"
             break
+    return comment
+
+
+def above_comment(cursor, module_index) -> str:
+    """
+    Find comments directly above a declaration in the source file.
+    :param cursor: ctypes Cursor object representing the declaration.
+    :param module_index: ModuleIndex object containing ancillary parsing information.
+    :return: either the empty string, or a python comment string
+    """
+    if module_index is None:
+        return ""
+    tu_ix = module_index.comment_index.get(cursor.translation_unit, None)
+    if tu_ix is None:
+        return ""
+    loc_start = cursor.extent.start
+    file_ix = tu_ix.get(loc_start.file.name, None)
+    if file_ix is None:
+        return ""
+    # Above comment must end on the line before the cursor begins.
+    line_ix = file_ix["end_line"].get(loc_start.line - 1, None)
+    if line_ix is None:
+        return ""
+    assert len(line_ix) == 1
+    token = line_ix[0]
+    comment = f"{_py_comment_from_token(token)}"
     return comment
 
 
@@ -151,7 +198,11 @@ def field_code(cursor: Cursor, indent=8, module_index=None):
     assert cursor.kind == CursorKind.FIELD_DECL
     field_name = name_for_cursor(cursor)
     type_name = ctypes_name_for_clang_type(cursor.type, module_index)
+    a_comment = above_comment(cursor, module_index)
     r_comment = right_comment(cursor)
+    if len(a_comment) > 0:
+        for line in a_comment.splitlines():
+            yield i + line
     yield i+f'("{field_name}", {type_name}),{r_comment}'
 
 

@@ -34,8 +34,8 @@ def all_filter(_cursor):
 class ModuleBuilder(object):
     def __init__(self, file_paths, compiler_args=None):
         self.included_cursors = set()
+        self.comment_index = dict()
         self.translation_units = []
-        self.tu_comments = []
         for file_path in file_paths:
             tu = Index.create().parse(
                 path=file_path,
@@ -44,12 +44,27 @@ class ModuleBuilder(object):
                 | TranslationUnit.PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION,
             )
             self.translation_units.append(tu)
-            # Store the comments for later alignment to the cursors maybe
-            comments = []
-            for tok in tu.cursor.get_tokens():
-                if tok.kind == TokenKind.COMMENT:
-                    comments.append(tok)
-            self.tu_comments.append(comments)
+            # Store the comments for later alignment to the cursors
+            if tu not in self.comment_index:
+                self.comment_index[tu] = dict()
+            ctu = self.comment_index[tu]
+            for token in tu.cursor.get_tokens():
+                if token.kind == TokenKind.COMMENT:
+                    file_name = token.location.file.name
+                    if file_name not in ctu:
+                        ctu[file_name] = dict()
+                        ctu[file_name]["start_line"] = dict()
+                        ctu[file_name]["end_line"] = dict()
+                    starts = ctu[file_name]["start_line"]
+                    ends = ctu[file_name]["end_line"]
+                    start_line = token.extent.start.line
+                    end_line = token.extent.end.line
+                    if start_line not in starts:
+                        starts[start_line] = list()
+                    if end_line not in ends:
+                        ends[end_line] = list()
+                    starts[start_line].append(token)
+                    ends[end_line].append(token)
 
     def cursors(self, criteria=all_filter):
         """Top level cursors"""
