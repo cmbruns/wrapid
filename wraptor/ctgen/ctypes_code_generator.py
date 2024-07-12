@@ -1,4 +1,5 @@
 import inspect
+import sys
 
 from clang.cindex import Type as ClangType
 from clang.cindex import (
@@ -9,19 +10,20 @@ from clang.cindex import (
     TypeKind,
 )
 
-from wraptor import ModuleBuilder
+from wraptor import ModuleBuilder, messages
 from wraptor.module_builder import name_for_cursor
 
 
 class CTypesCodeGenerator(object):
     def __init__(self, module_builder: ModuleBuilder):
         self.module_builder = module_builder
-        self.imports = dict()
-        self.all_section_cursors = set()
         self.coder_for_cursor_kind = {
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
         }
+        self.imports = dict()
+        self.all_section_cursors = set()
+        self.unexposed_dependencies = dict()
 
     def above_comment(self, cursor, indent: int) -> str:
         """
@@ -105,6 +107,7 @@ class CTypesCodeGenerator(object):
                 self.set_import("ctypes", "POINTER")
                 return f"POINTER({self.ctypes_name_for_clang_type(pointee)})"
         else:
+            self._check_type_dependency(clang_type)
             return clang_type.spelling
 
     def field_code(self, cursor: Cursor, indent=8):
@@ -171,6 +174,15 @@ class CTypesCodeGenerator(object):
             yield i + "    pass"
         yield ""
 
+    def _check_type_dependency(self, clang_type: ClangType):
+        self._check_cursor_dependency(clang_type.get_declaration())
+
+    def _check_cursor_dependency(self, cursor: Cursor):
+        if cursor.kind == CursorKind.NO_DECL_FOUND:
+            return
+        if cursor.hash not in self.module_builder.included_cursors:
+            self.unexposed_dependencies[cursor.hash] = cursor
+
     def typedef_code(self, cursor: Cursor, indent=0):
         i = indent * " "
         name = name_for_cursor(cursor)
@@ -185,6 +197,9 @@ class CTypesCodeGenerator(object):
         yield i + f"{name} = {base_type}{r_comment}"
 
     def write_module(self, file):
+        self.imports.clear()
+        self.all_section_cursors.clear()
+        self.unexposed_dependencies.clear()
         body_lines = []
         for cursor in self.module_builder.cursors():
             if not cursor.is_included():
@@ -201,6 +216,10 @@ class CTypesCodeGenerator(object):
         # __all__ stanza
         for line in self.all_section_code():
             print(line, file=file)
+        file.flush()
+        # Warn about unexposed dependencies
+        for cursor in self.unexposed_dependencies.values():
+            print(f"WARNING: {name_for_cursor(cursor)} {cursor.kind}", file=sys.stderr)
 
 
 def _py_comment_from_token(token: Token):
