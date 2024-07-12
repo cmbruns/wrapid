@@ -137,12 +137,17 @@ def ctypes_name_for_clang_type(clang_type: ClangType, module_index=None):
             t = "c_char_p"
             index_import(module_index, "ctypes", t)
             return t
-        elif pointee.kind == TypeKind.WCHAR:
-            t = "c_wchar_p"
-            index_import(module_index, "ctypes", t)
-            return t
+        elif pointee.kind == TypeKind.FUNCTIONPROTO:
+            result_type = ctypes_name_for_clang_type(pointee.get_result(), module_index)
+            arg_types = [ctypes_name_for_clang_type(a, module_index) for a in pointee.argument_types()]
+            index_import(module_index, "ctypes", "CFUNCTYPE")
+            return f"CFUNCTYPE({result_type}, {', '.join(arg_types)})"
         elif pointee.kind == TypeKind.VOID:
             t = "c_void_p"
+            index_import(module_index, "ctypes", t)
+            return t
+        elif pointee.kind == TypeKind.WCHAR:
+            t = "c_wchar_p"
             index_import(module_index, "ctypes", t)
             return t
         else:
