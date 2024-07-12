@@ -69,10 +69,46 @@ class ModuleIndex(object):
             return
         yield ""
         yield "__all__ = ["
-        for cursor in self.all_section_cursors:
-            yield f'    "{name_for_cursor(cursor)}",'
+        all_items = sorted([name_for_cursor(c) for c in self.all_section_cursors])
+        for item in all_items:
+            yield f'    "{item}",'
         yield "]"
         yield ""
+
+
+def above_comment(cursor, indent: int, module_index) -> str:
+    """
+    Find comments directly above a declaration in the source file.
+    :param cursor: ctypes Cursor object representing the declaration.
+    :param indent: number of spaces cursor is indented in the output
+    :param module_index: ModuleIndex object containing ancillary parsing information.
+    :return: either the empty string, or a python comment string
+    """
+    if module_index is None:
+        return
+    tu_ix = module_index.comment_index.get(cursor.translation_unit, None)
+    if tu_ix is None:
+        return
+    loc_start = cursor.extent.start
+    file_ix = tu_ix.get(loc_start.file.name, None)
+    if file_ix is None:
+        return
+    # Above comment must end on the line before the cursor begins.
+    line_ix = file_ix["end_line"].get(loc_start.line - 1, None)
+    if line_ix is None:
+        return
+    assert len(line_ix) == 1
+    token = line_ix[0]
+    comment = _py_comment_from_token(token)
+    i = " " * indent
+    for line in comment.splitlines():
+        yield i + line
+
+
+def add_to_all(module_index: Optional[ModuleIndex], cursor: Cursor):
+    if module_index is None:
+        return
+    module_index.add_all_cursor(cursor)
 
 
 def ctypes_name_for_clang_type(clang_type: ClangType, module_index=None):
@@ -114,6 +150,22 @@ def ctypes_name_for_clang_type(clang_type: ClangType, module_index=None):
             return f"POINTER({ctypes_name_for_clang_type(pointee, module_index)})"
     else:
         return clang_type.spelling
+
+
+def field_code(cursor: Cursor, indent=8, module_index=None):
+    i = indent * " "
+    assert cursor.kind == CursorKind.FIELD_DECL
+    field_name = name_for_cursor(cursor)
+    type_name = ctypes_name_for_clang_type(cursor.type, module_index)
+    yield from above_comment(cursor, indent, module_index)
+    r_comment = right_comment(cursor, module_index)
+    yield i+f'("{field_name}", {type_name}),{r_comment}'
+
+
+def index_import(module_index: Optional[ModuleIndex], import_module: str, import_name: str):
+    if module_index is None:
+        return
+    module_index.set_import(import_module, import_name)
 
 
 def _py_comment_from_token(token: Token):
@@ -168,57 +220,6 @@ def right_comment(cursor, module_index) -> str:
     return comment
 
 
-def above_comment(cursor, indent: int, module_index) -> str:
-    """
-    Find comments directly above a declaration in the source file.
-    :param cursor: ctypes Cursor object representing the declaration.
-    :param indent: number of spaces cursor is indented in the output
-    :param module_index: ModuleIndex object containing ancillary parsing information.
-    :return: either the empty string, or a python comment string
-    """
-    if module_index is None:
-        return
-    tu_ix = module_index.comment_index.get(cursor.translation_unit, None)
-    if tu_ix is None:
-        return
-    loc_start = cursor.extent.start
-    file_ix = tu_ix.get(loc_start.file.name, None)
-    if file_ix is None:
-        return
-    # Above comment must end on the line before the cursor begins.
-    line_ix = file_ix["end_line"].get(loc_start.line - 1, None)
-    if line_ix is None:
-        return
-    assert len(line_ix) == 1
-    token = line_ix[0]
-    comment = _py_comment_from_token(token)
-    i = " " * indent
-    for line in comment.splitlines():
-        yield i + line
-
-
-def field_code(cursor: Cursor, indent=8, module_index=None):
-    i = indent * " "
-    assert cursor.kind == CursorKind.FIELD_DECL
-    field_name = name_for_cursor(cursor)
-    type_name = ctypes_name_for_clang_type(cursor.type, module_index)
-    yield from above_comment(cursor, indent, module_index)
-    r_comment = right_comment(cursor, module_index)
-    yield i+f'("{field_name}", {type_name}),{r_comment}'
-
-
-def add_to_all(module_index: Optional[ModuleIndex], cursor: Cursor):
-    if module_index is None:
-        return
-    module_index.add_all_cursor(cursor)
-
-
-def index_import(module_index: Optional[ModuleIndex], import_module: str, import_name: str):
-    if module_index is None:
-        return
-    module_index.set_import(import_module, import_name)
-
-
 def struct_code(cursor: Cursor, indent=0, module_index=None):
     assert cursor.kind == CursorKind.STRUCT_DECL
     i = indent * " "
@@ -245,6 +246,8 @@ def typedef_code(cursor: Cursor, indent=0, module_index=None):
     i = indent * " "
     name = name_for_cursor(cursor)
     base_type = ctypes_name_for_clang_type(cursor.underlying_typedef_type, module_index)
+    if name == base_type:
+        return  # Tautology typedefs need not apply
     add_to_all(module_index, cursor)
     yield ""
     yield from above_comment(cursor, indent, module_index)
