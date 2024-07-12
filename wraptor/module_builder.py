@@ -2,6 +2,10 @@ from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
 from wraptor.lib import clang_lib_loader  # noqa
 
 
+def all_filter(_cursor):
+    return True
+
+
 def name_for_cursor(cursor: Cursor):
     if cursor.kind == CursorKind.STRUCT_DECL:
         # Workaround for anonymous structs
@@ -27,8 +31,18 @@ class CursorWrapper(object):
         return self.cursor.hash in self.included_cursors
 
 
-def all_filter(_cursor):
-    return True
+class CursorGeneratorWrapper(object):
+    """Thin wrapper around a clang cursor generator with methods to help set wrapping state"""
+    def __init__(self, generator):
+        self.generator = generator
+
+    def __getattr__(self, method_name):
+        """Delegate unknown methods to contained cursor"""
+        return getattr(self.generator, method_name)
+
+    def include(self):
+        for cursor_wrapper in self.generator:
+            cursor_wrapper.include()
 
 
 class ModuleBuilder(object):
@@ -45,26 +59,27 @@ class ModuleBuilder(object):
             )
             self.translation_units.append(tu)
             # Store the comments for later alignment to the cursors
-            if tu not in self.comment_index:
-                self.comment_index[tu] = dict()
-            ctu = self.comment_index[tu]
+            ctu = self.comment_index.setdefault(tu, dict())
+            # first pass - count all the tokens at each line, for later use by comment processing
+            token_start_counts = dict()
+            for token in tu.cursor.get_tokens():
+                file_name = token.location.file.name
+                start_line = token.extent.start.line
+                token_start_counts.setdefault(file_name, dict()).setdefault(start_line, 0)
+                token_start_counts[file_name][start_line] += 1
+            # second pass - just look at the comments
             for token in tu.cursor.get_tokens():
                 if token.kind == TokenKind.COMMENT:
                     file_name = token.location.file.name
-                    if file_name not in ctu:
-                        ctu[file_name] = dict()
-                        ctu[file_name]["start_line"] = dict()
-                        ctu[file_name]["end_line"] = dict()
-                    starts = ctu[file_name]["start_line"]
-                    ends = ctu[file_name]["end_line"]
-                    start_line = token.extent.start.line
                     end_line = token.extent.end.line
-                    if start_line not in starts:
-                        starts[start_line] = list()
-                    if end_line not in ends:
-                        ends[end_line] = list()
-                    starts[start_line].append(token)
-                    ends[end_line].append(token)
+                    starts = ctu.setdefault(file_name, dict()).setdefault("start_line", dict())
+                    ends = ctu[file_name].setdefault("end_line", dict())
+                    start_line = token.extent.start.line
+                    starts.setdefault(start_line, list()).append(token)
+                    # Only store ends for comments that are the only token on their start line
+                    # (otherwise the comment probably does not belong to the declaration below it)
+                    if token_start_counts[file_name][start_line] == 1:
+                        ends.setdefault(end_line, list()).append(token)
 
     def cursors(self, criteria=all_filter):
         """Top level cursors"""
@@ -97,6 +112,10 @@ class ModuleBuilder(object):
                 c.kind == CursorKind.TYPEDEF_DECL
                 and name_for_cursor(c) == name
         )
+
+    def typedefs(self, criteria=all_filter):
+        generator = filter(lambda c: c.kind == CursorKind.TYPEDEF_DECL and criteria(c), self.cursors())
+        return CursorGeneratorWrapper(generator)
 
 
 __all__ = [
