@@ -1,3 +1,5 @@
+from typing import Iterator
+
 from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
 from wraptor.lib import clang_lib_loader  # noqa
 
@@ -81,7 +83,7 @@ class ModuleBuilder(object):
                     if token_start_counts[file_name][start_line] == 1:
                         ends.setdefault(end_line, list()).append(token)
 
-    def cursors(self, criteria=all_filter):
+    def cursors(self, criteria=all_filter) -> Iterator[CursorWrapper]:
         """Top level cursors"""
         for tu in self.translation_units:
             for cursor in filter(criteria, tu.cursor.get_children()):
@@ -119,6 +121,7 @@ class ModuleBuilder(object):
 
 
 __all__ = [
+    "CursorWrapper",
     "ModuleBuilder",
     "name_for_cursor",
 ]
