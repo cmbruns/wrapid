@@ -123,8 +123,7 @@ class CTypesCodeGenerator(object):
         field_name = name_for_cursor(cursor)
         type_name = self.ctypes_name_for_clang_type(cursor.type)
         yield from self.above_comment(cursor, indent)
-        r_comment = self.right_comment(cursor)
-        yield i + f'("{field_name}", {type_name}),{r_comment}'
+        yield from self.right_comment(cursor, i + f'("{field_name}", {type_name}),')
 
     def import_code(self):
         if not self.imports:
@@ -132,27 +131,41 @@ class CTypesCodeGenerator(object):
         for module in self.imports:
             yield f"from {module} import {', '.join(self.imports[module])}"
 
-    def right_comment(self, cursor) -> str:
+    def right_comment(self, cursor: ICursor, non_comment_code: str) -> Iterator[str]:
         """
         Find end-of-line comment on the same line as the declaration.
         :param cursor: ctypes Cursor object representing the declaration.
-        :return: either the empty string, or a two-space padded python comment
+        :param non_comment_code: Non-comment portion of the generated code line
+        :return: code lines with comment attached
         """
         tu_ix = self.module_builder.comment_index.get(cursor.translation_unit, None)
         if tu_ix is None:
-            return ""
+            yield non_comment_code
+            return  # No comments are indexed for this translation unit
         loc_end = cursor.extent.end
         file_ix = tu_ix.get(loc_end.file.name, None)
         if file_ix is None:
-            return ""
-        # Right comment must end on the same line as the cursor ends.
+            yield non_comment_code
+            return  # No comments are indexed for this source file
+        # Right comment must start on the same line as the cursor ends.
         line_ix = file_ix["start_line"].get(loc_end.line, None)
         if line_ix is None:
-            return ""
-        assert len(line_ix) == 1
+            yield non_comment_code
+            return  # No comments begin on the same source line as this declaration
+        assert len(line_ix) == 1  # TODO: what if there are two comments on the line?
         token = line_ix[0]
-        comment = f"  {_py_comment_from_token(token)}"
-        return comment
+        comment = _py_comment_from_token(token)
+        if comment in ["# ", ""]:
+            yield non_comment_code
+            return  # comment is empty
+        assert comment.startswith("# ")
+        # TODO: Indent subsequent lines of comment to line up with the first one.
+        lines = comment.splitlines()
+        yield f"{non_comment_code}  {lines[0]}"
+        for line in lines[1:]:
+            assert line.startswith("# ")
+            line = line.removeprefix("# ")
+            yield f"#{' ' * (len(non_comment_code) + 3)}{line}"
 
     def set_import(self, import_module: str, import_name: str):
         """
@@ -188,6 +201,25 @@ class CTypesCodeGenerator(object):
         if cursor.hash not in self.module_builder.included_cursors:
             self.unexposed_dependencies[cursor.hash] = cursor
 
+    def _inline_comment(self, non_comment_code: str, cursor: ICursor):
+        """
+        Align possibly multiline inline comment with prefix.
+
+        :param non_comment_code: Non-comment portion of the generated code line
+        :param cursor: clang cursor corresponding to the declaration being processed
+        """
+        comment = self.right_comment(cursor)  # TODO: refactor right_comment to do all this
+        lines = comment.splitlines()
+        if len(lines) < 2:
+            yield f"{non_comment_code}{comment}"  # Code and comment occupy just one line
+            return
+        yield f"{non_comment_code}{lines[0]}"  # First line of output has code and partial comment
+        for line in lines[1:]:
+            x = 3
+            assert line.startswith("# ")
+            line = line.removeprefix("# ")
+            yield f"#{' ' * (len(non_comment_code) + 3)}{line}"
+
     def typedef_code(self, cursor: ICursor, indent=0):
         i = indent * " "
         name = name_for_cursor(cursor)
@@ -197,8 +229,10 @@ class CTypesCodeGenerator(object):
             return  # Tautology typedefs need not apply
         self.add_all_cursor(cursor)
         yield from self.above_comment(cursor, indent)
-        r_comment = self.right_comment(cursor)
-        yield i + f"{name}: type = {base_type}{r_comment}"
+        yield from self.right_comment(cursor, i + f"{name}: type = {base_type}")
+        # r_comment = self.right_comment(cursor)
+        # pre_comment = i + f"{name}: type = {base_type}"
+        # yield f"{pre_comment}{r_comment}"
 
     def write_module(self, file):
         self.imports.clear()
@@ -225,7 +259,7 @@ class CTypesCodeGenerator(object):
         import_blank_lines = 0
         for line in self.import_code():
             # Emit at least one blank line after imports
-            import_blank_lines = 1
+            import_blank_lines = 1  # TODO: what if a class definition follows the imports?
             print(line, file=file)
         for _ in range(import_blank_lines):
             print("", file=file)
