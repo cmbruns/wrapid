@@ -162,10 +162,14 @@ class CTypesCodeGenerator(object):
         # TODO: Indent subsequent lines of comment to line up with the first one.
         lines = comment.splitlines()
         yield f"{non_comment_code}  {lines[0]}"
+        # 1) Indentation of the output code fragment
+        indent1 = " " * (len(non_comment_code) - len(non_comment_code.lstrip(" ")))
+        # 2) Further indentation of the comment section
+        indent2 = " " * (len(non_comment_code) - len(indent1) + 3)
         for line in lines[1:]:
             assert line.startswith("# ")
             line = line.removeprefix("# ")
-            yield f"#{' ' * (len(non_comment_code) + 3)}{line}"
+            yield f"{indent1}#{indent2}{line}"
 
     def set_import(self, import_module: str, import_name: str):
         """
@@ -200,25 +204,6 @@ class CTypesCodeGenerator(object):
             return
         if cursor.hash not in self.module_builder.included_cursors:
             self.unexposed_dependencies[cursor.hash] = cursor
-
-    def _inline_comment(self, non_comment_code: str, cursor: ICursor):
-        """
-        Align possibly multiline inline comment with prefix.
-
-        :param non_comment_code: Non-comment portion of the generated code line
-        :param cursor: clang cursor corresponding to the declaration being processed
-        """
-        comment = self.right_comment(cursor)  # TODO: refactor right_comment to do all this
-        lines = comment.splitlines()
-        if len(lines) < 2:
-            yield f"{non_comment_code}{comment}"  # Code and comment occupy just one line
-            return
-        yield f"{non_comment_code}{lines[0]}"  # First line of output has code and partial comment
-        for line in lines[1:]:
-            x = 3
-            assert line.startswith("# ")
-            line = line.removeprefix("# ")
-            yield f"#{' ' * (len(non_comment_code) + 3)}{line}"
 
     def typedef_code(self, cursor: ICursor, indent=0):
         i = indent * " "

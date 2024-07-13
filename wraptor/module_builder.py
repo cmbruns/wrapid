@@ -106,6 +106,7 @@ class ModuleBuilder(object):
             lambda c:
                 c.kind == CursorKind.STRUCT_DECL
                 and name_for_cursor(c) == name
+                and c.is_definition()
         )
 
     def typedef(self, name: str):
