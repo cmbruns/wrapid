@@ -69,7 +69,6 @@ class CTypesCodeGenerator(object):
             CursorKind.TYPEDEF_DECL: self.typedef_code,
         }[cursor_kind]
 
-
     def field_code(self, cursor: Cursor, indent=8):
         i = indent * " "
         assert cursor.kind == CursorKind.FIELD_DECL
@@ -176,6 +175,8 @@ class CTypesCodeGenerator(object):
         name = name_for_cursor(cursor)
         # TODO: warn if base_type is not exposed
         base_type = w_type_for_clang_type(cursor.underlying_typedef_type, cursor)
+        if str(name) == str(base_type):
+            return  # Avoid no-op typedefs
         self.load_imports(base_type)
         if name == base_type:
             return  # Tautology typedefs need not apply
