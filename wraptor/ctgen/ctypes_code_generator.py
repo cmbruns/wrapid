@@ -11,6 +11,7 @@ from clang.cindex import (
 )
 
 from wraptor import ModuleBuilder
+from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
 from wraptor.module_builder import name_for_cursor, CursorWrapper
 
 
@@ -68,60 +69,13 @@ class CTypesCodeGenerator(object):
             CursorKind.TYPEDEF_DECL: self.typedef_code,
         }[cursor_kind]
 
-    def ctypes_name_for_clang_type(self, clang_type: ClangType):
-        """
-        Recursive function to build up complex type names piece by piece
-        """
-        # TODO: maybe replace wraptor type_for_clang_type
-        if clang_type.kind in primitive_ctype_for_clang_type:
-            t = primitive_ctype_for_clang_type[clang_type.kind]
-            self.set_import("ctypes", t)
-            return t
-        if clang_type.kind == TypeKind.CONSTANTARRAY:
-            element_type = self.ctypes_name_for_clang_type(clang_type.element_type)
-            # TODO: element_count may or may not be a constant macro
-            return f"{element_type} * {clang_type.element_count}"
-        elif clang_type.kind == TypeKind.ELABORATED:
-            return self.ctypes_name_for_clang_type(clang_type.get_declaration().type)
-        elif clang_type.kind == TypeKind.FUNCTIONPROTO:
-            result_type = self.ctypes_name_for_clang_type(clang_type.get_result())
-            arg_types = [self.ctypes_name_for_clang_type(a) for a in clang_type.argument_types()]
-            self.set_import("ctypes", "CFUNCTYPE")
-            return f"CFUNCTYPE({result_type}, {', '.join(arg_types)})"
-        elif clang_type.kind == TypeKind.POINTER:
-            pointee = clang_type.get_pointee()
-            if pointee.kind in [TypeKind.CHAR_S, TypeKind.SCHAR]:
-                t = "c_char_p"
-                self.set_import("ctypes", t)
-                return t
-            elif pointee.kind == TypeKind.FUNCTIONPROTO:
-                result_type = self.ctypes_name_for_clang_type(pointee.get_result())
-                arg_types = [self.ctypes_name_for_clang_type(a) for a in pointee.argument_types()]
-                self.set_import("ctypes", "CFUNCTYPE")
-                return f"CFUNCTYPE({result_type}, {', '.join(arg_types)})"
-            elif pointee.kind == TypeKind.VOID:
-                t = "c_void_p"
-                self.set_import("ctypes", t)
-                return t
-            elif pointee.kind == TypeKind.WCHAR:
-                t = "c_wchar_p"
-                self.set_import("ctypes", t)
-                return t
-            else:
-                self.set_import("ctypes", "POINTER")
-                return f"POINTER({self.ctypes_name_for_clang_type(pointee)})"
-        elif clang_type.spelling.startswith("struct "):
-            struct_name = clang_type.spelling.removeprefix("struct ")
-            return struct_name
-        else:
-            self._check_type_dependency(clang_type)
-            return clang_type.spelling
 
     def field_code(self, cursor: Cursor, indent=8):
         i = indent * " "
         assert cursor.kind == CursorKind.FIELD_DECL
         field_name = name_for_cursor(cursor)
-        type_name = self.ctypes_name_for_clang_type(cursor.type)
+        type_name = w_type_for_clang_type(cursor.type, cursor)
+        self.load_imports(type_name)
         yield from self.above_comment(cursor, indent)
         yield from self.right_comment(cursor, i + f'("{field_name}", {type_name}),')
 
@@ -129,7 +83,13 @@ class CTypesCodeGenerator(object):
         if not self.imports:
             return
         for module in self.imports:
-            yield f"from {module} import {', '.join(self.imports[module])}"
+            if len(self.imports[module]) < 5:
+                yield f"from {module} import {', '.join(sorted(self.imports[module]))}"
+            else:
+                yield f"from {module} import ("
+                for item in sorted(self.imports[module]):
+                    yield f"    {item},"
+                yield ")"
 
     def right_comment(self, cursor: ICursor, non_comment_code: str) -> Iterator[str]:
         """
@@ -171,6 +131,10 @@ class CTypesCodeGenerator(object):
             line = line.removeprefix("# ")
             yield f"{indent1}#{indent2}{line}"
 
+    def load_imports(self, wtype: WCTypesType):
+        for module, item in wtype.imports():
+            self.set_import(module, item)
+
     def set_import(self, import_module: str, import_name: str):
         """
         Track import statements needed for the python module we are creating
@@ -190,7 +154,9 @@ class CTypesCodeGenerator(object):
                 fields.append(child)
         if len(fields) > 0:
             yield i + f"    _fields_ = ("
-            for field in fields:
+            for index, field in enumerate(fields):
+                if index > 0:
+                    yield ""  # blank line between fields
                 yield from self.field_code(field, indent + 8)
             yield i + f"    )"
         else:
@@ -209,7 +175,8 @@ class CTypesCodeGenerator(object):
         i = indent * " "
         name = name_for_cursor(cursor)
         # TODO: warn if base_type is not exposed
-        base_type = self.ctypes_name_for_clang_type(cursor.underlying_typedef_type)
+        base_type = w_type_for_clang_type(cursor.underlying_typedef_type, cursor)
+        self.load_imports(base_type)
         if name == base_type:
             return  # Tautology typedefs need not apply
         self.add_all_cursor(cursor)

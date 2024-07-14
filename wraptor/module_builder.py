@@ -109,6 +109,16 @@ class ModuleBuilder(object):
                 and c.is_definition()
         )
 
+    def structs(self, criteria=all_filter):
+        generator = filter(
+            lambda c:
+                c.kind == CursorKind.STRUCT_DECL
+                and criteria(c)
+                and c.is_definition(),
+            self.cursors()
+        )
+        return CursorGeneratorWrapper(generator)
+
     def typedef(self, name: str):
         return self._singleton_cursor(
             lambda c:
