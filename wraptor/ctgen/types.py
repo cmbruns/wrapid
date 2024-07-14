@@ -95,17 +95,18 @@ class PointerType(WCTypesType):
         yield "ctypes", "POINTER"
         yield from self.pointee.imports()
 
+    def dependencies(self) -> Iterator[Cursor]:
+        """Declarations in the name of this type, which might need to be exposed."""
+        yield from super().dependencies()
+        # TODO: maybe pointee dependencies could be satisfied with forward declarations
+        yield from self.pointee.dependencies()
+
     @property
-    def pointee(self):
+    def pointee(self) -> WCTypesType:
         return w_type_for_clang_type(self.clang_type.get_pointee())
 
     def __str__(self) -> str:
         return f"POINTER({self.pointee})"
-
-
-class VoidType(WCTypesType):
-    def __str__(self):
-        return "None"
 
 
 class PrimitiveCTypesType(WCTypesType):
@@ -118,6 +119,11 @@ class PrimitiveCTypesType(WCTypesType):
 
     def __str__(self) -> str:
         return self.symbol
+
+
+class VoidType(WCTypesType):
+    def __str__(self):
+        return "None"
 
 
 def w_type_for_clang_type(clang_type: ClangType, parent_declaration: Cursor = None) -> WCTypesType:

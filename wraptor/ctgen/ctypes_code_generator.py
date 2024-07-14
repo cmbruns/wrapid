@@ -23,6 +23,7 @@ class CTypesCodeGenerator(object):
         self.imports = dict()
         self.all_section_cursors = set()
         self.unexposed_dependencies = dict()
+        self.custom_declaration_code = ""
 
     def above_comment(self, cursor, indent: int) -> str:
         """
@@ -53,6 +54,9 @@ class CTypesCodeGenerator(object):
 
     def add_all_cursor(self, cursor):
         self.all_section_cursors.add(cursor)
+
+    def add_declaration_code(self, code: str) -> None:
+        self.custom_declaration_code += code
 
     def all_section_code(self):
         if not self.all_section_cursors:
@@ -198,6 +202,9 @@ class CTypesCodeGenerator(object):
         # so we can track needed import statements just-in-time
         body_lines = []
         previous_blank_lines = 0
+        if len(self.custom_declaration_code) > 0:
+            for line in self.custom_declaration_code.splitlines():
+                body_lines.append(line)
         for cursor in self.module_builder.cursors():
             if not cursor.is_included():
                 continue
@@ -236,8 +243,8 @@ class CTypesCodeGenerator(object):
             print(inspect.cleandoc(f"""
                 WARNING: {name_for_cursor(dependee)} [{unexposed_kind}]
                 > execution error W1040: This declaration is unexposed, but there are other 
-                > declarations that refer to it. This could cause "no to_python
-                > converter found" run time error.
+                > declarations that refer to it. This could cause
+                > "NameError: name is not defined" run time error.
                 > Declarations: [{', '.join(sorted([c.spelling for c in dependers.values()]))}]
             """))
 
