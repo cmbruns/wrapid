@@ -48,14 +48,15 @@ class CursorGeneratorWrapper(object):
 
 
 class ModuleBuilder(object):
-    def __init__(self, file_paths, compiler_args=None):
+    def __init__(self, path, compiler_args=None, unsaved_files=None):
         self.included_cursors = set()
         self.comment_index = dict()
         self.translation_units = []
-        for file_path in file_paths:
+        for file_path in [path, ]:
             tu = Index.create().parse(
                 path=file_path,
                 args=compiler_args,
+                unsaved_files=unsaved_files,
                 options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
                 | TranslationUnit.PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION,
             )

@@ -1,7 +1,6 @@
 import inspect
 from typing import Union, Callable, Iterator
 
-from clang.cindex import Type as ClangType
 from clang.cindex import (
     Cursor,
     CursorKind,
@@ -36,6 +35,8 @@ class CTypesCodeGenerator(object):
         if tu_ix is None:
             return
         loc_start = cursor.extent.start
+        if loc_start.file is None:
+            return
         file_ix = tu_ix.get(loc_start.file.name, None)
         if file_ix is None:
             return
@@ -75,6 +76,7 @@ class CTypesCodeGenerator(object):
         field_name = name_for_cursor(cursor)
         type_name = w_type_for_clang_type(cursor.type, cursor)
         self.load_imports(type_name)
+        self.check_dependency(type_name, cursor)
         yield from self.above_comment(cursor, indent)
         yield from self.right_comment(cursor, i + f'("{field_name}", {type_name}),')
 
@@ -102,6 +104,8 @@ class CTypesCodeGenerator(object):
             yield non_comment_code
             return  # No comments are indexed for this translation unit
         loc_end = cursor.extent.end
+        if loc_end.file is None:
+            return
         file_ix = tu_ix.get(loc_end.file.name, None)
         if file_ix is None:
             yield non_comment_code
@@ -161,14 +165,14 @@ class CTypesCodeGenerator(object):
         else:
             yield i + "    pass"
 
-    def _check_type_dependency(self, clang_type: ClangType):
-        self._check_cursor_dependency(clang_type.get_declaration())
-
-    def _check_cursor_dependency(self, cursor: Cursor):
-        if cursor.kind == CursorKind.NO_DECL_FOUND:
-            return
-        if cursor.hash not in self.module_builder.included_cursors:
-            self.unexposed_dependencies[cursor.hash] = cursor
+    def check_dependency(self, wc_type: WCTypesType, depender: Cursor):
+        for dependee in wc_type.dependencies():
+            if dependee.kind == CursorKind.NO_DECL_FOUND:
+                continue  # not a real declaration
+            if dependee.hash in self.module_builder.included_cursors:
+                continue  # declaration already exposed
+            _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
+            dependers[depender.hash] = depender
 
     def typedef_code(self, cursor: ICursor, indent=0):
         i = indent * " "
@@ -178,8 +182,7 @@ class CTypesCodeGenerator(object):
         if str(name) == str(base_type):
             return  # Avoid no-op typedefs
         self.load_imports(base_type)
-        if name == base_type:
-            return  # Tautology typedefs need not apply
+        self.check_dependency(base_type, cursor)
         self.add_all_cursor(cursor)
         yield from self.above_comment(cursor, indent)
         yield from self.right_comment(cursor, i + f"{name}: type = {base_type}")
@@ -228,14 +231,14 @@ class CTypesCodeGenerator(object):
             print(line, file=file)
         file.flush()
         # Warn about unexposed dependencies
-        for unexposed_cursor in self.unexposed_dependencies.values():
-            unexposed_kind = short_name_for_cursor_kind.get(unexposed_cursor.kind, str(unexposed_cursor.kind))
+        for dependee, dependers in self.unexposed_dependencies.values():
+            unexposed_kind = short_name_for_cursor_kind.get(dependee.kind, str(dependee.kind))
             print(inspect.cleandoc(f"""
-                WARNING: {name_for_cursor(unexposed_cursor)} [{unexposed_kind}]
+                WARNING: {name_for_cursor(dependee)} [{unexposed_kind}]
                 > execution error W1040: This declaration is unexposed, but there are other 
                 > declarations that refer to it. This could cause "no to_python
                 > converter found" run time error.
-                > Declarations: []
+                > Declarations: [{', '.join(sorted([c.spelling for c in dependers.values()]))}]
             """))
 
 
