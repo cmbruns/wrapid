@@ -61,7 +61,6 @@ class CTypesCodeGenerator(object):
     def all_section_code(self):
         if not self.all_section_cursors:
             return
-        yield ""
         yield "__all__ = ["
         all_items = sorted([name_for_cursor(c) for c in self.all_section_cursors])
         for item in all_items:
@@ -295,25 +294,7 @@ def _py_comment_from_token(token: Token):
     return comment
 
 
-primitive_ctype_for_clang_type = {
-    TypeKind.BOOL: "c_bool",
-    TypeKind.CHAR_S: "c_char",
-    TypeKind.CHAR_U: "c_ubyte",
-    TypeKind.DOUBLE: "c_double",
-    TypeKind.FLOAT: "c_float",
-    TypeKind.INT: "c_int",
-    TypeKind.LONG: "c_long",
-    TypeKind.LONGDOUBLE: "c_longdouble",
-    TypeKind.LONGLONG: "c_longlong",
-    TypeKind.SCHAR: "c_char",
-    TypeKind.SHORT: "c_short",
-    TypeKind.UCHAR: "c_ubyte",
-    TypeKind.UINT: "c_uint",
-    TypeKind.ULONG: "c_ulong",
-    TypeKind.ULONGLONG: "c_ulonglong",
-    TypeKind.USHORT: "c_ushort",
-    TypeKind.WCHAR: "c_wchar",
-}
+# TODO: this should be in module_builder
 short_name_for_cursor_kind = {
     CursorKind.STRUCT_DECL: "struct",
 }
