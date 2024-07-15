@@ -11,10 +11,10 @@ from clang.cindex import (
 
 from wraptor import ModuleBuilder
 from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
-from wraptor.module_builder import name_for_cursor, CursorWrapper
+from wraptor.module_builder import name_for_cursor
+from wraptor.wdecl import WDeclaration, w_decl_for_cursor
 
-
-ICursor = Union[Cursor, CursorWrapper]
+ICursor = Union[Cursor, WDeclaration]
 
 
 class CTypesCodeGenerator(object):
@@ -173,7 +173,8 @@ class CTypesCodeGenerator(object):
         for dependee in wc_type.dependencies():
             if dependee.kind == CursorKind.NO_DECL_FOUND:
                 continue  # not a real declaration
-            if dependee.hash in self.module_builder.included_cursors:
+            w_decl = w_decl_for_cursor(dependee, self.module_builder.w_decls)
+            if w_decl.is_included():
                 continue  # declaration already exposed
             _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
             dependers[depender.hash] = depender

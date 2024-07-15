@@ -2,6 +2,7 @@ from typing import Iterator
 
 from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
 from wraptor.lib import clang_lib_loader  # noqa
+from wraptor.wdecl import WDeclaration, w_decl_for_cursor
 
 
 def all_filter(_cursor):
@@ -14,23 +15,6 @@ def name_for_cursor(cursor: Cursor):
         if len(cursor.spelling) < 1:
             return cursor.type.spelling
     return cursor.spelling
-
-
-class CursorWrapper(object):
-    """Thin wrapper around a clang cursor with methods to help set wrapping state"""
-    def __init__(self, cursor, included_cursors: set):
-        self.cursor = cursor
-        self.included_cursors = included_cursors
-
-    def __getattr__(self, method_name):
-        """Delegate unknown methods to contained cursor"""
-        return getattr(self.cursor, method_name)
-
-    def include(self):
-        self.included_cursors.add(self.cursor.hash)
-
-    def is_included(self):
-        return self.cursor.hash in self.included_cursors
 
 
 class CursorGeneratorWrapper(object):
@@ -49,7 +33,7 @@ class CursorGeneratorWrapper(object):
 
 class ModuleBuilder(object):
     def __init__(self, path, compiler_args=None, unsaved_files=None):
-        self.included_cursors = set()
+        self.w_decls = dict()  # Dictionary of wrapped cursors
         self.comment_index = dict()
         self.translation_units = []
         for file_path in [path, ]:
@@ -84,13 +68,13 @@ class ModuleBuilder(object):
                     if token_start_counts[file_name][start_line] == 1:
                         ends.setdefault(end_line, list()).append(token)
 
-    def cursors(self, criteria=all_filter) -> Iterator[CursorWrapper]:
+    def cursors(self, criteria=all_filter) -> Iterator[WDeclaration]:
         """Top level cursors"""
         for tu in self.translation_units:
             for cursor in filter(criteria, tu.cursor.get_children()):
-                yield CursorWrapper(cursor, self.included_cursors)
+                yield w_decl_for_cursor(cursor, self.w_decls)
 
-    def _singleton_cursor(self, criteria) -> CursorWrapper:
+    def _singleton_cursor(self, criteria) -> WDeclaration:
         """Query expected to return exactly one cursor"""
         result = None
         for index, cursor in enumerate(self.cursors(criteria)):
@@ -102,7 +86,7 @@ class ModuleBuilder(object):
             raise RuntimeError("no matches")
         return result
 
-    def struct(self, name: str) -> CursorWrapper:
+    def struct(self, name: str) -> WDeclaration:
         return self._singleton_cursor(
             lambda c:
                 c.kind == CursorKind.STRUCT_DECL
@@ -133,7 +117,6 @@ class ModuleBuilder(object):
 
 
 __all__ = [
-    "CursorWrapper",
     "ModuleBuilder",
     "name_for_cursor",
 ]
