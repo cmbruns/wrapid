@@ -6,7 +6,6 @@ from clang.cindex import (
     CursorKind,
     Token,
     TokenKind,
-    TypeKind,
 )
 
 from wraptor import ModuleBuilder
@@ -53,9 +52,6 @@ class CTypesCodeGenerator(object):
 
     def add_all_cursor(self, cursor):
         self.all_section_cursors.add(cursor)
-
-    def add_declaration_code(self, code: str) -> None:
-        self.custom_declaration_code += code
 
     def all_section_code(self):
         if not self.all_section_cursors:
@@ -136,8 +132,8 @@ class CTypesCodeGenerator(object):
             line = line.removeprefix("# ")
             yield f"{indent1}#{indent2}{line}"
 
-    def load_imports(self, wtype: WCTypesType):
-        for module, item in wtype.imports():
+    def load_imports(self, w_type: WCTypesType):
+        for module, item in w_type.imports():
             self.set_import(module, item)
 
     def set_import(self, import_module: str, import_name: str):
