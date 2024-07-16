@@ -23,7 +23,6 @@ class CTypesCodeGenerator(object):
         self.imports = dict()
         self.all_section_cursors = set()
         self.unexposed_dependencies = dict()
-        self.custom_declaration_code = ""
 
     def above_comment(self, cursor, indent: int) -> str:
         """
@@ -202,9 +201,7 @@ class CTypesCodeGenerator(object):
         # so we can track needed import statements just-in-time
         body_lines = []
         previous_blank_lines = 0
-        if len(self.custom_declaration_code) > 0:
-            for line in self.custom_declaration_code.splitlines():
-                body_lines.append(line)
+        body_initial_blank_lines = None
         for cursor in self.module_builder.cursors():
             if not cursor.is_included():
                 continue
@@ -212,17 +209,23 @@ class CTypesCodeGenerator(object):
             for index, line in enumerate(coder(cursor, 0)):
                 if index == 0:
                     # Insert blank lines according to PEP8 and CursorType
-                    blank_lines_count = max(previous_blank_lines, _blank_lines(cursor))
-                    for _ in range(blank_lines_count):
-                        body_lines.append("")
+                    if body_initial_blank_lines is None:
+                        # Remember how many blank lines the very first body element prefers
+                        body_initial_blank_lines = _blank_lines(cursor)
+                    else:
+                        blank_lines_count = max(previous_blank_lines, _blank_lines(cursor))
+                        for _ in range(blank_lines_count):
+                            body_lines.append("")
                     previous_blank_lines = _blank_lines(cursor)
                 body_lines.append(line)
         # Now start printing lines for real
         # import statements
-        import_blank_lines = 0
+        import_blank_lines = 0  # number of blank lines to insert after imports
+        if body_initial_blank_lines is None:
+            body_initial_blank_lines = 0
         for line in self.import_code():
             # Emit at least one blank line after imports
-            import_blank_lines = 1  # TODO: what if a class definition follows the imports?
+            import_blank_lines = max(1, body_initial_blank_lines)
             print(line, file=file)
         for _ in range(import_blank_lines):
             print("", file=file)
