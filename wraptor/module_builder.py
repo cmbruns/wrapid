@@ -1,6 +1,4 @@
-from collections.abc import Iterable
-
-from clang.cindex import Index, TranslationUnit, TokenKind, Cursor
+from clang.cindex import Index, TranslationUnit, TokenKind
 
 from wraptor.decl import RootDeclGroup, CursorChildIterable, WrappedDeclIndex
 from wraptor.lib import clang_lib_loader  # noqa
@@ -56,7 +54,7 @@ __all__ = [
 
 if __name__ == "__main__":
     mb = ModuleBuilder(
-        file_paths=["C:/Users/cmbruns/Documents/git/libjpeg-turbo/jpeglib.h"],
+        path="C:/Users/cmbruns/Documents/git/libjpeg-turbo/jpeglib.h",
     )
     jpeg_compress_struct = mb.struct("jpeg_compress_struct")
     jpeg_compress_struct.include()
