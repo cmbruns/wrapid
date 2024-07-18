@@ -17,7 +17,10 @@ class WrappedDeclIndex(object):
         return cursor.hash
 
     def get(self, cursor: Cursor) -> "DeclWrapper":
-        return self._index.setdefault(self._cursor_key(cursor), DeclWrapper(cursor, self))
+        if cursor.kind == CursorKind.STRUCT_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), StructWrapper(cursor, self))
+        else:
+            return self._index.setdefault(self._cursor_key(cursor), DeclWrapper(cursor, self))
 
 
 class DeclWrapper(object):
@@ -73,7 +76,7 @@ class StructWrapper(DeclWrapper):
         for child in self.get_children():
             if child.kind == CursorKind.FIELD_DECL:
                 if child.spelling == field_name:
-                    return w_decl_for_cursor(child, self._index)
+                    return self._index.get(child)
                     # TODO: error on multiple hits
         raise ValueError("no such field")  # TODO: better message
 
@@ -140,14 +143,14 @@ class BaseDeclGroup(Iterable[DeclWrapper]):
     def _select_single_declaration(self, predicate: Predicate) -> DeclWrapper:
         """Query expected to return exactly one cursor"""
         result = None
-        for index, cursor in enumerate(filter(predicate, self)):
+        for index, decl in enumerate(filter(predicate, self)):
             if index == 0:
-                result = cursor
+                result = decl
             else:
                 raise RuntimeError("multiple matches")  # TODO: better error
         if result is None:
             raise RuntimeError("no matches")  # TODO: better error
-        return self._wrapper(result)
+        return decl
 
 
 class RootDeclGroup(BaseDeclGroup):
