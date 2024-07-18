@@ -1,7 +1,8 @@
+from collections import deque
 from collections.abc import Iterable, Callable
 from typing import Iterator
 
-from clang.cindex import CursorKind, Cursor
+from clang.cindex import CursorKind, Cursor, TranslationUnit
 
 
 class WrappedDeclIndex(object):
@@ -60,14 +61,46 @@ def everything_predicate(_cursor: DeclWrapper) -> bool:
     return True
 
 
-class CursorChildIterable(object):
-    def __init__(self, parent_cursor: Cursor, wrapper_index: WrappedDeclIndex) -> None:
-        self.parent_cursor: Cursor = parent_cursor
+class TranslationUnitIterable(object):
+    """
+    Iterable object over the declarations related to a clang.cindex.TranslationUnit
+    including declarations found outside the translation unit.
+    """
+    def __init__(self, translation_unit: TranslationUnit, wrapper_index: WrappedDeclIndex) -> None:
+        self.parent_cursor: Cursor = translation_unit.cursor
         self.wrapper_index = wrapper_index
+        # TODO: maybe also to comment parsing here...
+        # TODO interleave macro definitions correctly with other code
+        previous_cursor = None
+        macro_deque = deque()
+        for cursor in self.parent_cursor.get_children():
+            # For initial implementation, just do the main file
+            if str(cursor.location.file) == translation_unit.spelling:
+                x = 3
+                if cursor.kind == CursorKind.MACRO_INSTANTIATION:
+                    x = 3
+                elif cursor.kind == CursorKind.MACRO_DEFINITION:
+                    macro_deque.append(cursor)
+                    file_name = str(cursor.location.file)
+                    x = 3
+            previous_cursor = cursor
 
     def __iter__(self) -> Iterator[DeclWrapper]:
+        # Interleave two declaration streams, one for macro definitions, another for everything else
+        macro_stream = self.parent_cursor.get_children()
+        other_stream = self.parent_cursor.get_children()
+        # First flush all the macros not related to the main file
+        for macro_cursor in macro_stream:
+            if macro_cursor.kind != CursorKind.MACRO_DEFINITION:
+                continue
+            break
+        for other_cursor in other_stream:
+            if other_cursor.kind == CursorKind.MACRO_DEFINITION:
+                continue
+            break
         for c in self.parent_cursor.get_children():
-            yield self.wrapper_index.get(c)
+            decl = self.wrapper_index.get(c)
+            yield decl
 
 
 class StructWrapper(DeclWrapper):

@@ -1,6 +1,6 @@
 from clang.cindex import Index, TranslationUnit, TokenKind
 
-from wraptor.decl import RootDeclGroup, CursorChildIterable, WrappedDeclIndex
+from wraptor.decl import RootDeclGroup, TranslationUnitIterable, WrappedDeclIndex
 from wraptor.lib import clang_lib_loader  # noqa
 
 
@@ -17,7 +17,7 @@ class ModuleBuilder(object):
         self.wrapper_index = WrappedDeclIndex()
         # Store root cursor generator for later method delegation
         self.cursor_generator = RootDeclGroup(
-            cursors=CursorChildIterable(self.translation_unit.cursor, self.wrapper_index),
+            cursors=TranslationUnitIterable(self.translation_unit, self.wrapper_index),
             wrapper_index=self.wrapper_index,
         )
         # Store the comments for later alignment to the cursors
