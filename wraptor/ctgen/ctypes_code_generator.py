@@ -120,7 +120,7 @@ class CTypesCodeGenerator(object):
             yield non_comment_code
             return  # comment is empty
         assert comment.startswith("# ")
-        # TODO: Indent subsequent lines of comment to line up with the first one.
+        # Indent subsequent lines of comment to line up with the first one.
         lines = comment.splitlines()
         yield f"{non_comment_code}  {lines[0]}"
         # 1) Indentation of the output code fragment
@@ -140,9 +140,21 @@ class CTypesCodeGenerator(object):
         i = indent * " "
         assert cursor.kind == CursorKind.MACRO_DEFINITION
         macro_name = cursor.spelling
+        tokens = list(cursor.get_tokens())[1:]  # skip the first token, which is the macro name
+        if len(tokens) < 1:
+            return  # empty definition
+        if len(tokens) > 2:
+            return  # too many tokens to deal with TODO:
+        rhs = tokens[0].spelling
+        if len(tokens) == 2:
+            if tokens[1].spelling == "-":
+                # two tokens for negative numbers is OK
+                rhs += tokens[1].spelling
+            else:
+                return  # TODO: unexplored case
         self.add_all_cursor(cursor)
         yield from self.above_comment(cursor, indent)
-        yield from self.right_comment(cursor, i + f'{macro_name} = foo')
+        yield from self.right_comment(cursor, i + f'{macro_name} = {rhs}')
 
     def set_import(self, import_module: str, import_name: str):
         """
@@ -291,6 +303,7 @@ def _py_comment_from_token(token: Token):
         if is_star_comment and index > 0:
             if line.startswith(pad + " *"):
                 line = pad + "  " + line.removeprefix(pad + " *")
+        line = line.rstrip()
         lines.append(line)
     # Remove whitespace in a multiline-aware way
     comment = inspect.cleandoc("\n".join(lines))
