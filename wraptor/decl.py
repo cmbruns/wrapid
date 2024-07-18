@@ -156,6 +156,13 @@ class BaseDeclGroup(Iterable[DeclWrapper]):
 class RootDeclGroup(BaseDeclGroup):
     """Declaration generator for top level declarations"""
 
+    def enums(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":
+        return BaseDeclGroup(
+            self,
+            self._wrapper_index,
+            lambda c: c.kind == CursorKind.ENUM_DECL and predicate(c),
+        )
+
     def macros(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":
         return BaseDeclGroup(
             self,

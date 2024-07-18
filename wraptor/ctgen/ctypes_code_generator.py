@@ -63,10 +63,33 @@ class CTypesCodeGenerator(object):
 
     def coder_for_cursor_kind(self, cursor_kind: CursorKind) -> Callable[[ICursor, int], Iterator[str]]:
         return {
+            CursorKind.ENUM_DECL: self.enum_code,
             CursorKind.MACRO_DEFINITION: self.macro_code,
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
         }[cursor_kind]
+
+    def enum_code(self, cursor: Cursor, indent=0):
+        i = indent * " "
+        assert cursor.kind == CursorKind.ENUM_DECL
+        self.set_import("enum", "IntFlag")
+        self.add_all_cursor(cursor)
+        values = []
+        for v in cursor.get_children():
+            assert v.kind == CursorKind.ENUM_CONSTANT_DECL
+            values.append(v)
+        yield i + f"class {name_for_cursor(cursor)}(IntFlag):"
+        if len(values) == 0:
+            yield i + "    pass"
+        else:
+            for v in values:
+                yield from self.enum_constant_code(v, indent + 4)
+
+    @staticmethod
+    def enum_constant_code(cursor: Cursor, indent=4):
+        i = indent * " "
+        assert cursor.kind == CursorKind.ENUM_CONSTANT_DECL
+        yield i + f"{name_for_cursor(cursor)} = {cursor.enum_value}"
 
     def field_code(self, cursor: Cursor, indent=8):
         i = indent * " "
