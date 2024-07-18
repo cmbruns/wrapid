@@ -10,10 +10,9 @@ from clang.cindex import (
 
 from wraptor import ModuleBuilder
 from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
-from wraptor.module_builder import name_for_cursor
-from wraptor.wdecl import WDeclaration, w_decl_for_cursor
+from wraptor.decl import DeclWrapper, name_for_cursor
 
-ICursor = Union[Cursor, WDeclaration]
+ICursor = Union[Cursor, DeclWrapper]
 
 
 class CTypesCodeGenerator(object):
@@ -64,6 +63,7 @@ class CTypesCodeGenerator(object):
 
     def coder_for_cursor_kind(self, cursor_kind: CursorKind) -> Callable[[ICursor, int], Iterator[str]]:
         return {
+            CursorKind.MACRO_DEFINITION: self.macro_code,
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
         }[cursor_kind]
@@ -136,6 +136,14 @@ class CTypesCodeGenerator(object):
         for module, item in w_type.imports():
             self.set_import(module, item)
 
+    def macro_code(self, cursor: Cursor, indent=0):
+        i = indent * " "
+        assert cursor.kind == CursorKind.MACRO_DEFINITION
+        macro_name = cursor.spelling
+        self.add_all_cursor(cursor)
+        yield from self.above_comment(cursor, indent)
+        yield from self.right_comment(cursor, i + f'{macro_name} = foo')
+
     def set_import(self, import_module: str, import_name: str):
         """
         Track import statements needed for the python module we are creating
@@ -167,7 +175,7 @@ class CTypesCodeGenerator(object):
         for dependee in wc_type.dependencies():
             if dependee.kind == CursorKind.NO_DECL_FOUND:
                 continue  # not a real declaration
-            w_decl = w_decl_for_cursor(dependee, self.module_builder.w_decls)
+            w_decl = self.module_builder.wrapper_index.get(dependee)
             if w_decl.is_included():
                 continue  # declaration already exposed
             _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
@@ -198,9 +206,7 @@ class CTypesCodeGenerator(object):
         body_lines = []
         previous_blank_lines = 0
         body_initial_blank_lines = None
-        for cursor in self.module_builder.cursors():
-            if not cursor.is_included():
-                continue
+        for cursor in self.module_builder.included():
             coder = self.coder_for_cursor_kind(cursor.kind)
             for index, line in enumerate(coder(cursor, 0)):
                 if index == 0:

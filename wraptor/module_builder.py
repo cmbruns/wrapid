@@ -1,124 +1,57 @@
-from typing import Iterator
+from collections.abc import Iterable
 
-from clang.cindex import Index, Cursor, CursorKind, TranslationUnit, TokenKind
+from clang.cindex import Index, TranslationUnit, TokenKind, Cursor
+
+from wraptor.decl import RootDeclGroup, CursorChildIterable, WrappedDeclIndex
 from wraptor.lib import clang_lib_loader  # noqa
-from wraptor.wdecl import WDeclaration, w_decl_for_cursor
-
-
-def all_filter(_cursor):
-    return True
-
-
-def name_for_cursor(cursor: Cursor):
-    if cursor.kind == CursorKind.STRUCT_DECL:
-        # Workaround for anonymous structs
-        if len(cursor.spelling) < 1:
-            return cursor.type.spelling
-    return cursor.spelling
-
-
-class CursorGeneratorWrapper(object):
-    """Thin wrapper around a clang cursor generator with methods to help set wrapping state"""
-    def __init__(self, generator):
-        self.generator = generator
-
-    def __getattr__(self, method_name):
-        """Delegate unknown methods to contained cursor"""
-        return getattr(self.generator, method_name)
-
-    def include(self):
-        for cursor_wrapper in self.generator:
-            cursor_wrapper.include()
 
 
 class ModuleBuilder(object):
     def __init__(self, path, compiler_args=None, unsaved_files=None):
-        self.w_decls = dict()  # Dictionary of wrapped cursors
         self.comment_index = dict()
-        self.translation_units = []
-        for file_path in [path, ]:
-            tu = Index.create().parse(
-                path=file_path,
-                args=compiler_args,
-                unsaved_files=unsaved_files,
-                options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
-                | TranslationUnit.PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION,
-            )
-            self.translation_units.append(tu)
-            # Store the comments for later alignment to the cursors
-            ctu = self.comment_index.setdefault(tu, dict())
-            # first pass - count all the tokens at each line, for later use by comment processing
-            token_start_counts = dict()
-            for token in tu.cursor.get_tokens():
+        self.translation_unit = Index.create().parse(
+            path=path,
+            args=compiler_args,
+            unsaved_files=unsaved_files,
+            options=TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
+            | TranslationUnit.PARSE_INCLUDE_BRIEF_COMMENTS_IN_CODE_COMPLETION,
+        )
+        self.wrapper_index = WrappedDeclIndex()
+        # Store root cursor generator for later method delegation
+        self.cursor_generator = RootDeclGroup(
+            cursors=CursorChildIterable(self.translation_unit.cursor, self.wrapper_index),
+            wrapper_index=self.wrapper_index,
+        )
+        # Store the comments for later alignment to the cursors
+        ctu = self.comment_index.setdefault(self.translation_unit, dict())
+        # first pass - count all the tokens at each line, for later use by comment processing
+        token_start_counts = dict()
+        for token in self.translation_unit.cursor.get_tokens():
+            file_name = token.location.file.name
+            start_line = token.extent.start.line
+            token_start_counts.setdefault(file_name, dict()).setdefault(start_line, 0)
+            token_start_counts[file_name][start_line] += 1
+        # second pass - just look at the comments
+        for token in self.translation_unit.cursor.get_tokens():
+            if token.kind == TokenKind.COMMENT:
                 file_name = token.location.file.name
+                end_line = token.extent.end.line
+                starts = ctu.setdefault(file_name, dict()).setdefault("start_line", dict())
+                ends = ctu[file_name].setdefault("end_line", dict())
                 start_line = token.extent.start.line
-                token_start_counts.setdefault(file_name, dict()).setdefault(start_line, 0)
-                token_start_counts[file_name][start_line] += 1
-            # second pass - just look at the comments
-            for token in tu.cursor.get_tokens():
-                if token.kind == TokenKind.COMMENT:
-                    file_name = token.location.file.name
-                    end_line = token.extent.end.line
-                    starts = ctu.setdefault(file_name, dict()).setdefault("start_line", dict())
-                    ends = ctu[file_name].setdefault("end_line", dict())
-                    start_line = token.extent.start.line
-                    starts.setdefault(start_line, list()).append(token)
-                    # Only store ends for comments that are the only token on their start line
-                    # (otherwise the comment probably does not belong to the declaration below it)
-                    if token_start_counts[file_name][start_line] == 1:
-                        ends.setdefault(end_line, list()).append(token)
+                starts.setdefault(start_line, list()).append(token)
+                # Only store ends for comments that are the only token on their start line
+                # (otherwise the comment probably does not belong to the declaration below it)
+                if token_start_counts[file_name][start_line] == 1:
+                    ends.setdefault(end_line, list()).append(token)
 
-    def cursors(self, criteria=all_filter) -> Iterator[WDeclaration]:
-        """Top level cursors"""
-        for tu in self.translation_units:
-            for cursor in filter(criteria, tu.cursor.get_children()):
-                yield w_decl_for_cursor(cursor, self.w_decls)
-
-    def _singleton_cursor(self, criteria) -> WDeclaration:
-        """Query expected to return exactly one cursor"""
-        result = None
-        for index, cursor in enumerate(self.cursors(criteria)):
-            if index == 0:
-                result = cursor
-            elif index == 1:
-                raise RuntimeError("multiple matches")
-        if result is None:
-            raise RuntimeError("no matches")
-        return result
-
-    def struct(self, name: str) -> WDeclaration:
-        return self._singleton_cursor(
-            lambda c:
-                c.kind == CursorKind.STRUCT_DECL
-                and name_for_cursor(c) == name
-                and c.is_definition()
-        )
-
-    def structs(self, criteria=all_filter):
-        generator = filter(
-            lambda c:
-                c.kind == CursorKind.STRUCT_DECL
-                and criteria(c)
-                and c.is_definition(),
-            self.cursors()
-        )
-        return CursorGeneratorWrapper(generator)
-
-    def typedef(self, name: str):
-        return self._singleton_cursor(
-            lambda c:
-                c.kind == CursorKind.TYPEDEF_DECL
-                and name_for_cursor(c) == name
-        )
-
-    def typedefs(self, criteria=all_filter):
-        generator = filter(lambda c: c.kind == CursorKind.TYPEDEF_DECL and criteria(c), self.cursors())
-        return CursorGeneratorWrapper(generator)
+    def __getattr__(self, method_name):
+        """Delegate unknown methods to contained CursorGeneratorWrapper"""
+        return getattr(self.cursor_generator, method_name)
 
 
 __all__ = [
     "ModuleBuilder",
-    "name_for_cursor",
 ]
 
 if __name__ == "__main__":
