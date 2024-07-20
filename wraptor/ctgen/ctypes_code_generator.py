@@ -78,12 +78,20 @@ class CTypesCodeGenerator(object):
         for v in cursor.get_children():
             assert v.kind == CursorKind.ENUM_CONSTANT_DECL
             values.append(v)
+        enum_name = name_for_cursor(cursor)
         yield i + f"class {name_for_cursor(cursor)}(IntFlag):"
         if len(values) == 0:
             yield i + "    pass"
         else:
             for v in values:
                 yield from self.enum_constant_code(v, indent + 4)
+            # yield i + f"globals().update({enum_name}.__members__)"
+            # Two blank lines for PEP8
+            yield ""
+            yield ""
+            for v in values:
+                constant_name = name_for_cursor(v)
+                yield i + f"{constant_name} = {enum_name}.{constant_name}"
 
     @staticmethod
     def enum_constant_code(cursor: Cursor, indent=4):

@@ -89,6 +89,9 @@ class TranslationUnitIterable(object):
                     while len(macro_deque) > 0 and macro_deque[0].location.line < cursor.location.line:
                         yield self.wrapper_index.get(macro_deque.popleft())
             yield self.wrapper_index.get(cursor)
+        # Drain remaining macros
+        while len(macro_deque) > 0:
+            yield self.wrapper_index.get(macro_deque.popleft())
 
 
 class StructWrapper(DeclWrapper):

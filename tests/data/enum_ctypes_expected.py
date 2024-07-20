@@ -7,6 +7,11 @@ class Level(IntFlag):
     HIGH = 2
 
 
+LOW = Level.LOW
+MEDIUM = Level.MEDIUM
+HIGH = Level.HIGH
+
+
 __all__ = [
     "Level",
 ]
