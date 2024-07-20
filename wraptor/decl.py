@@ -1,6 +1,6 @@
 from collections import deque
 from collections.abc import Iterable, Callable
-from typing import Iterator
+from typing import Iterator, Optional
 
 from clang.cindex import CursorKind, Cursor, TranslationUnit
 
@@ -18,8 +18,12 @@ class WrappedDeclIndex(object):
         return cursor.hash
 
     def get(self, cursor: Cursor) -> "DeclWrapper":
-        if cursor.kind == CursorKind.STRUCT_DECL:
-            return self._index.setdefault(self._cursor_key(cursor), StructWrapper(cursor, self))
+        if cursor.kind == CursorKind.FIELD_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), FieldWrapper(cursor, self))
+        elif cursor.kind == CursorKind.STRUCT_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), StructUnionWrapper(cursor, self))
+        elif cursor.kind == CursorKind.UNION_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), StructUnionWrapper(cursor, self))
         else:
             return self._index.setdefault(self._cursor_key(cursor), DeclWrapper(cursor, self))
 
@@ -31,9 +35,13 @@ class DeclWrapper(object):
     This class contains configuration that could be applied to all declarations.
     """
     def __init__(self, cursor: Cursor, index: WrappedDeclIndex) -> None:
-        self._cursor = cursor
-        self._index = index
-        self._included = False
+        self._cursor: Cursor = cursor
+        self._index: dict[Cursor, DeclWrapper] = index
+        self._alias: Optional[str] = None  # exported name
+        # Declarations that must be generated before this one
+        self._dependencies: set[DeclWrapper] = set()
+        self._exported: bool = False  # whether to include in __all__
+        self._included: bool = False  # whether to generate bindings
 
     def __getattr__(self, method_name):
         """Delegate unknown methods to contained cursor"""
@@ -42,16 +50,50 @@ class DeclWrapper(object):
     def __hash__(self) -> int:
         return self._cursor.hash
 
-    def include(self) -> None:
+    def add_dependency(self, dependency: "DeclWrapper") -> None:
+        self._dependencies.add(dependency)
+
+    @property
+    def alias(self) -> str:
+        """The exported python name of the declaration"""
+        if self._alias is not None:
+            return self._alias
+        else:
+            return self.name
+
+    def include(self, export=True, before=None) -> None:
         """Expose this declaration"""
         self._included = True
+        self._exported = export
+        if before is not None:
+            before.add_dependency(self)
 
     def is_included(self):
         """:return: Whether this declaration is exposed."""
         return self._included
 
+    @property
+    def name(self) -> str:
+        """The imported C/C++ name of the declaration"""
+        # TODO: maybe eliminate name_for_cursor() function
+        if self.kind == CursorKind.STRUCT_DECL:
+            # Workaround for anonymous structs
+            if len(self.spelling) < 1:
+                return self.type.spelling
+        return self.spelling
+
+    def rename(self, name: str):
+        self._alias = name
+
     def __str__(self) -> str:
         return f"{self._cursor.spelling}"
+
+
+class FieldWrapper(DeclWrapper):
+    def field_type(self) -> DeclWrapper:
+        clang_type = self.type
+        clang_cursor = clang_type.get_declaration()
+        return self._index.get(clang_cursor)
 
 
 Predicate = [Callable[[DeclWrapper], bool]]
@@ -94,15 +136,18 @@ class TranslationUnitIterable(object):
             yield self.wrapper_index.get(macro_deque.popleft())
 
 
-class StructWrapper(DeclWrapper):
+class StructUnionWrapper(DeclWrapper):
     def field(self, field_name) -> DeclWrapper:
-        assert self.kind == CursorKind.STRUCT_DECL
+        for field in self.fields():
+            if field.name == field_name:
+                return field
+                # TODO: error on multiple hits
+        raise ValueError("no such field")  # TODO: better message
+
+    def fields(self) -> Iterator[FieldWrapper]:
         for child in self.get_children():
             if child.kind == CursorKind.FIELD_DECL:
-                if child.spelling == field_name:
-                    return self._index.get(child)
-                    # TODO: error on multiple hits
-        raise ValueError("no such field")  # TODO: better message
+                yield self._index.get(child)
 
 
 class BaseDeclGroup(Iterable[DeclWrapper]):

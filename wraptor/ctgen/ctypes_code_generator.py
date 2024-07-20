@@ -10,7 +10,7 @@ from clang.cindex import (
 
 from wraptor import ModuleBuilder
 from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
-from wraptor.decl import DeclWrapper, name_for_cursor
+from wraptor.decl import DeclWrapper, StructUnionWrapper, name_for_cursor
 
 ICursor = Union[Cursor, DeclWrapper]
 
@@ -70,7 +70,7 @@ class CTypesCodeGenerator(object):
             CursorKind.UNION_DECL: self.union_code,
         }[cursor_kind]
 
-    def enum_code(self, cursor: Cursor, indent=0):
+    def enum_code(self, cursor: DeclWrapper, indent=0):
         i = indent * " "
         assert cursor.kind == CursorKind.ENUM_DECL
         self.set_import("enum", "IntFlag")
@@ -100,7 +100,7 @@ class CTypesCodeGenerator(object):
         assert cursor.kind == CursorKind.ENUM_CONSTANT_DECL
         yield i + f"{name_for_cursor(cursor)} = {cursor.enum_value}"
 
-    def field_code(self, cursor: Cursor, indent=8):
+    def field_code(self, cursor: DeclWrapper, indent=8):
         i = indent * " "
         assert cursor.kind == CursorKind.FIELD_DECL
         field_name = name_for_cursor(cursor)
@@ -194,20 +194,17 @@ class CTypesCodeGenerator(object):
         """
         self.imports.setdefault(import_module, set()).add(import_name)
 
-    def struct_code(self, cursor: ICursor, indent=0):
+    def struct_code(self, cursor: DeclWrapper, indent=0):
         assert cursor.kind == CursorKind.STRUCT_DECL
         yield from self._struct_union_code(cursor, "Structure", indent)
 
-    def _struct_union_code(self, cursor: ICursor, ctypes_type_name: str = "Structure", indent=0):
+    def _struct_union_code(self, cursor: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
         i = indent * " "
         name = name_for_cursor(cursor)
         yield i + f"class {name}({ctypes_type_name}):"
         self.set_import("ctypes", ctypes_type_name)
         self.add_all_cursor(cursor)
-        fields = []
-        for child in cursor.get_children():
-            if child.kind == CursorKind.FIELD_DECL:
-                fields.append(child)
+        fields = list(cursor.fields())
         if len(fields) > 0:
             yield i + f"    _fields_ = ("
             for index, field in enumerate(fields):
@@ -228,7 +225,7 @@ class CTypesCodeGenerator(object):
             _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
             dependers[depender.hash] = depender
 
-    def typedef_code(self, cursor: ICursor, indent=0):
+    def typedef_code(self, cursor: DeclWrapper, indent=0):
         i = indent * " "
         name = name_for_cursor(cursor)
         # TODO: warn if base_type is not exposed
@@ -244,7 +241,7 @@ class CTypesCodeGenerator(object):
         # pre_comment = i + f"{name}: type = {base_type}"
         # yield f"{pre_comment}{r_comment}"
 
-    def union_code(self, cursor: ICursor, indent=0):
+    def union_code(self, cursor: DeclWrapper, indent=0):
         assert cursor.kind == CursorKind.UNION_DECL
         yield from self._struct_union_code(cursor, "Union", indent)
 

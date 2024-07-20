@@ -1,4 +1,4 @@
-from typing import Iterator
+from typing import Iterator, Optional
 from clang.cindex import Type as ClangType
 from clang.cindex import Cursor, CursorKind, TokenKind, TypeKind
 
@@ -9,6 +9,17 @@ class WCTypesType(object):
     """
     def __init__(self, clang_type: ClangType):
         self.clang_type = clang_type
+        self._alias = None
+
+    @property
+    def alias(self) -> str:
+        """The exported python name of this type"""
+        if self._alias is not None:
+            return self._alias
+        result = self.name
+        for prefix in ["struct ",]:
+            result = result.removeprefix(prefix)
+        return result
 
     def dependencies(self) -> Iterator[Cursor]:
         """Declarations in the name of this type, which might need to be exposed."""
@@ -20,17 +31,23 @@ class WCTypesType(object):
         """module/item pairs required for this type's name to be parsed"""
         yield from []
 
+    @property
+    def name(self) -> str:
+        """The imported C/C++ name of this type"""
+        return self.clang_type.spelling
+
     def __str__(self):
-        name = self.clang_type.spelling
-        if name.startswith("struct "):
-            name = name.removeprefix("struct ")
-        return name
+        return self.alias
 
 
 class ConstantArrayType(WCTypesType):
     def __init__(self, clang_type: ClangType, parent_declaration: Cursor):
         super().__init__(clang_type)
         self.parent_declaration = parent_declaration
+
+    @property
+    def alias(self) -> str:
+        return f"{self.element_type} * {self.element_count}"
 
     def dependencies(self) -> Iterator[Cursor]:
         yield from self.element_type.dependencies()
@@ -64,9 +81,6 @@ class ConstantArrayType(WCTypesType):
         """module/item pairs required for this type"""
         yield from self.element_type.imports()
 
-    def __str__(self) -> str:
-        return f"{self.element_type} * {self.element_count}"
-
 
 class FunctionPointerType(WCTypesType):
     def dependencies(self):
@@ -79,6 +93,10 @@ class FunctionPointerType(WCTypesType):
             yield from arg.imports()
 
     @property
+    def alias(self) -> str:
+        return f"CFUNCTYPE({self.result_type}, {', '.join([str(a) for a in self.arg_types])})"
+
+    @property
     def arg_types(self):
         return [w_type_for_clang_type(a) for a in self.clang_type.argument_types()]
 
@@ -86,14 +104,15 @@ class FunctionPointerType(WCTypesType):
     def result_type(self):
         return w_type_for_clang_type(self.clang_type.get_result())
 
-    def __str__(self):
-        return f"CFUNCTYPE({self.result_type}, {', '.join([str(a) for a in self.arg_types])})"
-
 
 class PointerType(WCTypesType):
     def imports(self):
         yield "ctypes", "POINTER"
         yield from self.pointee.imports()
+
+    @property
+    def alias(self) -> str:
+        return f"POINTER({self.pointee})"
 
     def dependencies(self) -> Iterator[Cursor]:
         """Declarations in the name of this type, which might need to be exposed."""
@@ -105,24 +124,23 @@ class PointerType(WCTypesType):
     def pointee(self) -> WCTypesType:
         return w_type_for_clang_type(self.clang_type.get_pointee())
 
-    def __str__(self) -> str:
-        return f"POINTER({self.pointee})"
-
 
 class PrimitiveCTypesType(WCTypesType):
     def __init__(self, clang_type, symbol: str):
         super().__init__(clang_type)
         self.symbol = symbol
 
+    @property
+    def alias(self) -> str:
+        return self.symbol
+
     def imports(self):
         yield "ctypes", self.symbol
 
-    def __str__(self) -> str:
-        return self.symbol
-
 
 class VoidType(WCTypesType):
-    def __str__(self):
+    @property
+    def alias(self) -> str:
         return "None"
 
 
