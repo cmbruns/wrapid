@@ -67,6 +67,7 @@ class CTypesCodeGenerator(object):
             CursorKind.MACRO_DEFINITION: self.macro_code,
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
+            CursorKind.UNION_DECL: self.union_code,
         }[cursor_kind]
 
     def enum_code(self, cursor: Cursor, indent=0):
@@ -195,10 +196,13 @@ class CTypesCodeGenerator(object):
 
     def struct_code(self, cursor: ICursor, indent=0):
         assert cursor.kind == CursorKind.STRUCT_DECL
+        yield from self._struct_union_code(cursor, "Structure", indent)
+
+    def _struct_union_code(self, cursor: ICursor, ctypes_type_name: str = "Structure", indent=0):
         i = indent * " "
         name = name_for_cursor(cursor)
-        yield i + f"class {name}(Structure):"
-        self.set_import("ctypes", "Structure")
+        yield i + f"class {name}({ctypes_type_name}):"
+        self.set_import("ctypes", ctypes_type_name)
         self.add_all_cursor(cursor)
         fields = []
         for child in cursor.get_children():
@@ -239,6 +243,10 @@ class CTypesCodeGenerator(object):
         # r_comment = self.right_comment(cursor)
         # pre_comment = i + f"{name}: type = {base_type}"
         # yield f"{pre_comment}{r_comment}"
+
+    def union_code(self, cursor: ICursor, indent=0):
+        assert cursor.kind == CursorKind.UNION_DECL
+        yield from self._struct_union_code(cursor, "Union", indent)
 
     def write_module(self, file):
         self.imports.clear()

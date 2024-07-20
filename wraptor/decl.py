@@ -238,6 +238,13 @@ class RootDeclGroup(BaseDeclGroup):
             lambda c: c.kind == CursorKind.TYPEDEF_DECL and predicate(c),
         )
 
+    def unions(self, predicate: Predicate = everything_predicate):
+        return BaseDeclGroup(
+            self,
+            self._wrapper_index,
+            lambda c: c.kind == CursorKind.UNION_DECL and predicate(c),
+        )
+
 
 def name_for_cursor(cursor: Cursor):
     if cursor.kind == CursorKind.STRUCT_DECL:
