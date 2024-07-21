@@ -100,15 +100,22 @@ class CTypesCodeGenerator(object):
         assert cursor.kind == CursorKind.ENUM_CONSTANT_DECL
         yield i + f"{cursor.spelling} = {cursor.enum_value}"
 
-    def field_code(self, cursor: DeclWrapper, indent=8):
+    def field_code(self, decl: DeclWrapper, indent=8):
         i = indent * " "
-        assert cursor.kind == CursorKind.FIELD_DECL
-        field_name = cursor.alias
-        type_name = w_type_for_clang_type(cursor.type, cursor)
-        self.load_imports(type_name)
-        self.check_dependency(type_name, cursor)
-        yield from self.above_comment(cursor, indent)
-        yield from self.right_comment(cursor, i + f'("{field_name}", {type_name}),')
+        assert decl.kind == CursorKind.FIELD_DECL
+        field_name = decl.alias
+        w_type = w_type_for_clang_type(decl.type, decl)
+        # If the field type is a declared type, use the alias, if any, as the name
+        type_cursor = w_type.clang_type.get_declaration()
+        if type_cursor.kind != CursorKind.NO_DECL_FOUND:
+            type_decl = self.module_builder.wrapper_index.get(type_cursor)
+            type_name = type_decl.alias
+        else:
+            type_name = w_type.alias
+        self.load_imports(w_type)
+        self.check_dependency(w_type, decl)
+        yield from self.above_comment(decl, indent)
+        yield from self.right_comment(decl, i + f'("{field_name}", {type_name}),')
 
     def import_code(self):
         if not self.imports:
