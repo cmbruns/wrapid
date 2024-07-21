@@ -39,7 +39,7 @@ class DeclWrapper(object):
         self._index: dict[Cursor, DeclWrapper] = index
         self._alias: Optional[str] = None  # exported name
         # Declarations that must be generated before this one
-        self._dependencies: set[DeclWrapper] = set()
+        self.dependencies: set[DeclWrapper] = set()
         self._exported: bool = False  # whether to include in __all__
         self._included: bool = False  # whether to generate bindings
 
@@ -51,7 +51,7 @@ class DeclWrapper(object):
         return self._cursor.hash
 
     def add_dependency(self, dependency: "DeclWrapper") -> None:
-        self._dependencies.add(dependency)
+        self.dependencies.add(dependency)
 
     @property
     def alias(self) -> str:
@@ -128,7 +128,7 @@ class TranslationUnitIterable(object):
                     continue
                 else:
                     # Drain macros that occur before this cursor in the file
-                    while len(macro_deque) > 0 and macro_deque[0].location.line < cursor.location.line:
+                    while len(macro_deque) > 0 and macro_deque[0].location.line <= cursor.extent.end.line:
                         yield self.wrapper_index.get(macro_deque.popleft())
             yield self.wrapper_index.get(cursor)
         # Drain remaining macros
@@ -289,13 +289,3 @@ class RootDeclGroup(BaseDeclGroup):
             self._wrapper_index,
             lambda c: c.kind == CursorKind.UNION_DECL and predicate(c),
         )
-
-
-def name_for_cursor(cursor: Cursor):
-    if cursor.kind == CursorKind.STRUCT_DECL:
-        # Workaround for anonymous structs
-        if len(cursor.spelling) < 1:
-            return cursor.type.spelling
-    return cursor.spelling
-
-

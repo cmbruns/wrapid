@@ -1,5 +1,5 @@
 import inspect
-from typing import Union, Callable, Iterator
+from typing import Union, Callable, Iterator, Optional
 
 from clang.cindex import (
     Cursor,
@@ -10,7 +10,7 @@ from clang.cindex import (
 
 from wraptor import ModuleBuilder
 from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
-from wraptor.decl import DeclWrapper, StructUnionWrapper, name_for_cursor
+from wraptor.decl import DeclWrapper, StructUnionWrapper
 
 ICursor = Union[Cursor, DeclWrapper]
 
@@ -56,7 +56,7 @@ class CTypesCodeGenerator(object):
         if not self.all_section_cursors:
             return
         yield "__all__ = ["
-        all_items = sorted([name_for_cursor(c) for c in self.all_section_cursors])
+        all_items = sorted([c.alias for c in self.all_section_cursors])
         for item in all_items:
             yield f'    "{item}",'
         yield "]"
@@ -79,8 +79,8 @@ class CTypesCodeGenerator(object):
         for v in cursor.get_children():
             assert v.kind == CursorKind.ENUM_CONSTANT_DECL
             values.append(v)
-        enum_name = name_for_cursor(cursor)
-        yield i + f"class {name_for_cursor(cursor)}(IntFlag):"
+        enum_name = cursor.alias
+        yield i + f"class {enum_name}(IntFlag):"
         if len(values) == 0:
             yield i + "    pass"
         else:
@@ -91,19 +91,19 @@ class CTypesCodeGenerator(object):
             yield ""
             yield ""
             for v in values:
-                constant_name = name_for_cursor(v)
+                constant_name = v.spelling
                 yield i + f"{constant_name} = {enum_name}.{constant_name}"
 
     @staticmethod
     def enum_constant_code(cursor: Cursor, indent=4):
         i = indent * " "
         assert cursor.kind == CursorKind.ENUM_CONSTANT_DECL
-        yield i + f"{name_for_cursor(cursor)} = {cursor.enum_value}"
+        yield i + f"{cursor.spelling} = {cursor.enum_value}"
 
     def field_code(self, cursor: DeclWrapper, indent=8):
         i = indent * " "
         assert cursor.kind == CursorKind.FIELD_DECL
-        field_name = name_for_cursor(cursor)
+        field_name = cursor.alias
         type_name = w_type_for_clang_type(cursor.type, cursor)
         self.load_imports(type_name)
         self.check_dependency(type_name, cursor)
@@ -200,8 +200,7 @@ class CTypesCodeGenerator(object):
 
     def _struct_union_code(self, cursor: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
         i = indent * " "
-        name = name_for_cursor(cursor)
-        yield i + f"class {name}({ctypes_type_name}):"
+        yield i + f"class {cursor.alias}({ctypes_type_name}):"
         self.set_import("ctypes", ctypes_type_name)
         self.add_all_cursor(cursor)
         fields = list(cursor.fields())
@@ -227,7 +226,7 @@ class CTypesCodeGenerator(object):
 
     def typedef_code(self, cursor: DeclWrapper, indent=0):
         i = indent * " "
-        name = name_for_cursor(cursor)
+        name = cursor.alias
         # TODO: warn if base_type is not exposed
         base_type = w_type_for_clang_type(cursor.underlying_typedef_type, cursor)
         if str(name) == str(base_type):
@@ -245,6 +244,28 @@ class CTypesCodeGenerator(object):
         assert cursor.kind == CursorKind.UNION_DECL
         yield from self._struct_union_code(cursor, "Union", indent)
 
+    # Factor out generating one cursor's lines, to help with
+    # automated dependency/before generation
+    def _write_declaration(self, decl: DeclWrapper, min_blank_lines_before: Optional[int], lines: list) -> (int, int):
+        min_blank_lines_after = min_blank_lines_before  # in case implementation is empty
+        for dep in decl.dependencies:
+            # TODO: check if its already exported first
+            min_blank_lines_before, min_blank_lines_after = self._write_declaration(dep, min_blank_lines_before, lines)
+        coder = self.coder_for_cursor_kind(decl.kind)
+        for index, line in enumerate(coder(decl, 0)):
+            if index == 0:
+                # Insert blank lines before declaration according to PEP8 and CursorType
+                if min_blank_lines_before is None:  # special signal to NOT prepend any blank lines
+                    # Remember how many blank lines the very first body element prefers
+                    min_blank_lines_before = _blank_lines(decl)
+                else:
+                    blank_lines_count = max(min_blank_lines_before, _blank_lines(decl))
+                    for _ in range(blank_lines_count):
+                        lines.append("")
+                min_blank_lines_after = _blank_lines(decl)
+            lines.append(line)
+        return min_blank_lines_before, min_blank_lines_after
+
     def write_module(self, file):
         self.imports.clear()
         self.all_section_cursors.clear()
@@ -252,22 +273,13 @@ class CTypesCodeGenerator(object):
         # First, accumulate the main body of the generated code in memory,
         # so we can track needed import statements just-in-time
         body_lines = []
-        previous_blank_lines = 0
+        after = 0  # How many blank lines to append after the last thing emitted
         body_initial_blank_lines = None
-        for cursor in self.module_builder.included():
-            coder = self.coder_for_cursor_kind(cursor.kind)
-            for index, line in enumerate(coder(cursor, 0)):
-                if index == 0:
-                    # Insert blank lines according to PEP8 and CursorType
-                    if body_initial_blank_lines is None:
-                        # Remember how many blank lines the very first body element prefers
-                        body_initial_blank_lines = _blank_lines(cursor)
-                    else:
-                        blank_lines_count = max(previous_blank_lines, _blank_lines(cursor))
-                        for _ in range(blank_lines_count):
-                            body_lines.append("")
-                    previous_blank_lines = _blank_lines(cursor)
-                body_lines.append(line)
+        after: Optional[int] = None  # None means don't prepend any blank lines at first
+        for decl in self.module_builder.included():
+            before, after = self._write_declaration(decl, after, body_lines)
+            if body_initial_blank_lines is None and before is not None:
+                body_initial_blank_lines = before
         # Now start printing lines for real
         # import statements
         import_blank_lines = 0  # number of blank lines to insert after imports
@@ -286,7 +298,7 @@ class CTypesCodeGenerator(object):
         for index, line in enumerate(self.all_section_code()):
             if index == 0:
                 # Emit at least one blank line before the __all__ stanza
-                for _ in range(max(1, previous_blank_lines)):
+                for _ in range(max(1, after)):
                     print("", file=file)
             print(line, file=file)
         file.flush()
@@ -294,7 +306,7 @@ class CTypesCodeGenerator(object):
         for dependee, dependers in self.unexposed_dependencies.values():
             unexposed_kind = short_name_for_cursor_kind.get(dependee.kind, str(dependee.kind))
             print(inspect.cleandoc(f"""
-                WARNING: {name_for_cursor(dependee)} [{unexposed_kind}]
+                WARNING: {dependee.spelling} [{unexposed_kind}]
                 > execution error W1040: This declaration is unexposed, but there are other 
                 > declarations that refer to it. This could cause
                 > "NameError: name is not defined" run time error.
