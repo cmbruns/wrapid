@@ -24,6 +24,8 @@ class WrappedDeclIndex(object):
             return self._index.setdefault(self._cursor_key(cursor), FieldWrapper(cursor, self))
         elif cursor.kind == CursorKind.STRUCT_DECL:
             return self._index.setdefault(self._cursor_key(cursor), StructUnionWrapper(cursor, self))
+        elif cursor.kind == CursorKind.TYPEDEF_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), TypedefWrapper(cursor, self))
         elif cursor.kind == CursorKind.UNION_DECL:
             return self._index.setdefault(self._cursor_key(cursor), StructUnionWrapper(cursor, self))
         else:
@@ -179,6 +181,15 @@ class StructUnionWrapper(DeclWrapper):
         forward_decl.include(before=before, export=export)
 
 
+class TypedefWrapper(DeclWrapper):
+    def base_type(self):
+        clang_type = self.underlying_typedef_type
+        if clang_type.kind == TypeKind.POINTER:
+            clang_type = clang_type.get_pointee()
+        cursor = clang_type.get_declaration()
+        return self._index.get(cursor)
+
+
 class BaseDeclGroup(Iterable[DeclWrapper]):
     """
     Base class for declaration generators.
@@ -261,6 +272,12 @@ class RootDeclGroup(BaseDeclGroup):
             lambda c: c.kind == CursorKind.ENUM_DECL and predicate(c),
         )
 
+    def macro(self, name: str) -> DeclWrapper:
+        return self.macros()._select_single_declaration(
+            lambda c:
+            c.spelling == name
+        )
+
     def macros(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":
         return BaseDeclGroup(
             self,
@@ -296,7 +313,7 @@ class RootDeclGroup(BaseDeclGroup):
             ,
         )
 
-    def typedef(self, name: str) -> DeclWrapper:
+    def typedef(self, name: str) -> TypedefWrapper:
         """
         Query one particular TypeDef declaration by name.
         :param name: The name of the TypeDef declaration
