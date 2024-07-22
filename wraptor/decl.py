@@ -4,7 +4,7 @@ from collections import deque
 from collections.abc import Iterable, Callable
 from typing import Iterator, Optional
 
-from clang.cindex import CursorKind, Cursor, TranslationUnit
+from clang.cindex import CursorKind, Cursor, TranslationUnit, TypeKind
 
 
 class WrappedDeclIndex(object):
@@ -100,6 +100,10 @@ class DeclWrapper(object):
 class FieldWrapper(DeclWrapper):
     def field_type(self) -> DeclWrapper:
         clang_type = self.type
+        if clang_type.kind == TypeKind.POINTER:
+            # There's no declaration for a pointer usually
+            # We probably mean the pointed-to type
+            clang_type = clang_type.get_pointee()
         clang_cursor = clang_type.get_declaration()
         return self._index.get(clang_cursor)
 
@@ -160,7 +164,7 @@ class StructUnionWrapper(DeclWrapper):
             if field.name == field_name:
                 return field
                 # TODO: error on multiple hits
-        raise ValueError("no such field")  # TODO: better message
+        raise ValueError(f"no such field: '{field_name}'")  # TODO: better message
 
     def fields(self) -> Iterator[FieldWrapper]:
         for child in self.get_children():
