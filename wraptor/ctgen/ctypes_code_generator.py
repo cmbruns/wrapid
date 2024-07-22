@@ -208,23 +208,33 @@ class CTypesCodeGenerator(object):
     def _struct_union_code(self, decl: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
         i = indent * " "
         fields = list(decl.fields())
-        if len(fields) == 0 and decl.decl_type == StructDeclType.DEFINITION_ONLY:
-            return  # Nothing to show
-        if decl.decl_type == StructDeclType.DEFINITION_ONLY:
-            yield i + f"{decl.alias}._fields = ("
-        else:
-            yield i + f"class {decl.alias}({ctypes_type_name}):"
-            self.set_import("ctypes", ctypes_type_name)
-            if len(fields) > 0 and decl.decl_type != StructDeclType.FORWARD_ONLY:
-                yield i + f"    _fields_ = ("
+        if decl.decl_type == StructDeclType.FORWARD_ONLY:
+            if len(fields) > 0:
+                yield i + "# Forward declaration. Definition of _fields_ will appear later."
             else:
-                yield i + "    pass"
-        if len(fields) > 0 and decl.decl_type != StructDeclType.FORWARD_ONLY:
+                yield i + "# Forward declaration"
+            self.set_import("ctypes", ctypes_type_name)
+            yield i + f"class {decl.alias}({ctypes_type_name}):"
+            yield i + "    pass"
+        else:
+            if decl.decl_type == StructDeclType.DEFINITION_ONLY:
+                if len(fields) > 0:
+                    yield i + f"{decl.alias}._fields_ = ("
+            elif decl.decl_type == StructDeclType.FULL:
+                self.set_import("ctypes", ctypes_type_name)
+                yield i + f"class {decl.alias}({ctypes_type_name}):"
+                if len(fields) > 0:
+                    yield i + "    _fields_ = ("
+                else:
+                    yield i + "    pass"
+            else:
+                raise NotImplementedError
             for index, field in enumerate(fields):
                 if index > 0:
                     yield ""  # blank line between fields
                 yield from self.field_code(field, indent + 8)
-            yield i + f"    )"
+            if len(fields) > 0:
+                yield i + f"    )"
         if decl._exported:
             self.add_all_cursor(decl)
 
