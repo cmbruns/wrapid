@@ -1,3 +1,5 @@
+import copy
+import enum
 from collections import deque
 from collections.abc import Iterable, Callable
 from typing import Iterator, Optional
@@ -36,12 +38,18 @@ class DeclWrapper(object):
     """
     def __init__(self, cursor: Cursor, index: WrappedDeclIndex) -> None:
         self._cursor: Cursor = cursor
-        self._index: dict[Cursor, DeclWrapper] = index
+        self._index: WrappedDeclIndex = index
         self._alias: Optional[str] = None  # exported name
         # Declarations that must be generated before this one
         self.dependencies: set[DeclWrapper] = set()
         self._exported: bool = False  # whether to include in __all__
         self._included: bool = False  # whether to generate bindings
+
+    def __copy__(self):
+        copied = type(self)(self._cursor, self._index)
+        copied._alias = self._alias
+        copied._include = self._included
+        return copied
 
     def __getattr__(self, method_name):
         """Delegate unknown methods to contained cursor"""
@@ -136,7 +144,17 @@ class TranslationUnitIterable(object):
             yield self.wrapper_index.get(macro_deque.popleft())
 
 
+class StructDeclType(enum.Enum):
+    FULL = 1
+    FORWARD_ONLY = 2
+    DEFINITION_ONLY = 3
+
+
 class StructUnionWrapper(DeclWrapper):
+    def __init__(self, *args, decl_type: StructDeclType = StructDeclType.FULL, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.decl_type = decl_type
+
     def field(self, field_name) -> DeclWrapper:
         for field in self.fields():
             if field.name == field_name:
@@ -148,6 +166,13 @@ class StructUnionWrapper(DeclWrapper):
         for child in self.get_children():
             if child.kind == CursorKind.FIELD_DECL:
                 yield self._index.get(child)
+
+    def include_forward(self, before: DeclWrapper) -> None:
+        forward_decl = copy.copy(self)
+        forward_decl.decl_type = StructDeclType.FORWARD_ONLY
+        forward_decl._exported = False
+        self.decl_type = StructDeclType.DEFINITION_ONLY
+        forward_decl.include(before=before)
 
 
 class BaseDeclGroup(Iterable[DeclWrapper]):

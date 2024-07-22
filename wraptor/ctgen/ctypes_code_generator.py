@@ -5,12 +5,12 @@ from clang.cindex import (
     Cursor,
     CursorKind,
     Token,
-    TokenKind,
+    TokenKind, TypeKind,
 )
 
 from wraptor import ModuleBuilder
 from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
-from wraptor.decl import DeclWrapper, StructUnionWrapper
+from wraptor.decl import DeclWrapper, StructUnionWrapper, StructDeclType
 
 ICursor = Union[Cursor, DeclWrapper]
 
@@ -205,21 +205,28 @@ class CTypesCodeGenerator(object):
         assert cursor.kind == CursorKind.STRUCT_DECL
         yield from self._struct_union_code(cursor, "Structure", indent)
 
-    def _struct_union_code(self, cursor: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
+    def _struct_union_code(self, decl: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
         i = indent * " "
-        yield i + f"class {cursor.alias}({ctypes_type_name}):"
-        self.set_import("ctypes", ctypes_type_name)
-        self.add_all_cursor(cursor)
-        fields = list(cursor.fields())
-        if len(fields) > 0:
-            yield i + f"    _fields_ = ("
+        fields = list(decl.fields())
+        if len(fields) == 0 and decl.decl_type == StructDeclType.DEFINITION_ONLY:
+            return  # Nothing to show
+        if decl.decl_type == StructDeclType.DEFINITION_ONLY:
+            yield i + f"{decl.alias}._fields = ("
+        else:
+            yield i + f"class {decl.alias}({ctypes_type_name}):"
+            self.set_import("ctypes", ctypes_type_name)
+            if len(fields) > 0 and decl.decl_type != StructDeclType.FORWARD_ONLY:
+                yield i + f"    _fields_ = ("
+            else:
+                yield i + "    pass"
+        if len(fields) > 0 and decl.decl_type != StructDeclType.FORWARD_ONLY:
             for index, field in enumerate(fields):
                 if index > 0:
                     yield ""  # blank line between fields
                 yield from self.field_code(field, indent + 8)
             yield i + f"    )"
-        else:
-            yield i + "    pass"
+        if decl._exported:
+            self.add_all_cursor(decl)
 
     def check_dependency(self, wc_type: WCTypesType, depender: Cursor):
         for dependee in wc_type.dependencies():
@@ -256,6 +263,8 @@ class CTypesCodeGenerator(object):
     def _write_declaration(self, decl: DeclWrapper, min_blank_lines_before: Optional[int], lines: list) -> (int, int):
         min_blank_lines_after = min_blank_lines_before  # in case implementation is empty
         for dep in decl.dependencies:
+            if dep is decl:
+                continue
             # TODO: check if its already exported first
             min_blank_lines_before, min_blank_lines_after = self._write_declaration(dep, min_blank_lines_before, lines)
         coder = self.coder_for_cursor_kind(decl.kind)
