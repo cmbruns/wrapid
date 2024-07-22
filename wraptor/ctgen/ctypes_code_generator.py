@@ -70,16 +70,17 @@ class CTypesCodeGenerator(object):
             CursorKind.UNION_DECL: self.union_code,
         }[cursor_kind]
 
-    def enum_code(self, cursor: DeclWrapper, indent=0):
+    def enum_code(self, decl: DeclWrapper, indent=0):
         i = indent * " "
-        assert cursor.kind == CursorKind.ENUM_DECL
+        assert decl.kind == CursorKind.ENUM_DECL
         self.set_import("enum", "IntFlag")
-        self.add_all_cursor(cursor)
+        if decl._exported:
+            self.add_all_cursor(decl)
         values = []
-        for v in cursor.get_children():
+        for v in decl.get_children():
             assert v.kind == CursorKind.ENUM_CONSTANT_DECL
             values.append(v)
-        enum_name = cursor.alias
+        enum_name = decl.alias
         yield i + f"class {enum_name}(IntFlag):"
         if len(values) == 0:
             yield i + "    pass"
@@ -191,6 +192,7 @@ class CTypesCodeGenerator(object):
                 rhs += tokens[1].spelling
             else:
                 return  # TODO: unexplored case
+        # TODO: but only if exported...
         self.add_all_cursor(cursor)
         yield from self.above_comment(cursor, indent)
         yield from self.right_comment(cursor, i + f'{macro_name} = {rhs}')
@@ -248,18 +250,19 @@ class CTypesCodeGenerator(object):
             _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
             dependers[depender.hash] = depender
 
-    def typedef_code(self, cursor: DeclWrapper, indent=0):
+    def typedef_code(self, decl: DeclWrapper, indent=0):
         i = indent * " "
-        name = cursor.alias
+        name = decl.alias
         # TODO: warn if base_type is not exposed
-        base_type = w_type_for_clang_type(cursor.underlying_typedef_type, cursor)
+        base_type = w_type_for_clang_type(decl.underlying_typedef_type, decl)
         if str(name) == str(base_type):
             return  # Avoid no-op typedefs
         self.load_imports(base_type)
-        self.check_dependency(base_type, cursor)
-        self.add_all_cursor(cursor)
-        yield from self.above_comment(cursor, indent)
-        yield from self.right_comment(cursor, i + f"{name}: type = {base_type}")
+        self.check_dependency(base_type, decl)
+        if decl._exported:
+            self.add_all_cursor(decl)
+        yield from self.above_comment(decl, indent)
+        yield from self.right_comment(decl, i + f"{name}: type = {base_type}")
         # r_comment = self.right_comment(cursor)
         # pre_comment = i + f"{name}: type = {base_type}"
         # yield f"{pre_comment}{r_comment}"
@@ -272,7 +275,7 @@ class CTypesCodeGenerator(object):
     # automated dependency/before generation
     def _write_declaration(self, decl: DeclWrapper, min_blank_lines_before: Optional[int], lines: list) -> (int, int):
         min_blank_lines_after = min_blank_lines_before  # in case implementation is empty
-        for dep in decl.dependencies:
+        for dep in decl.predecessors:
             if dep is decl:
                 continue
             # TODO: check if its already exported first

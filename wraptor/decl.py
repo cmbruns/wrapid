@@ -41,14 +41,14 @@ class DeclWrapper(object):
         self._index: WrappedDeclIndex = index
         self._alias: Optional[str] = None  # exported name
         # Declarations that must be generated before this one
-        self.dependencies: set[DeclWrapper] = set()
+        self.predecessors: set[DeclWrapper] = set()
         self._exported: bool = False  # whether to include in __all__
         self._included: bool = False  # whether to generate bindings
 
     def __copy__(self):
         copied = type(self)(self._cursor, self._index)
         copied._alias = self._alias
-        copied._include = self._included
+        copied._included = self._included
         return copied
 
     def __getattr__(self, method_name):
@@ -58,8 +58,8 @@ class DeclWrapper(object):
     def __hash__(self) -> int:
         return self._cursor.hash
 
-    def add_dependency(self, dependency: "DeclWrapper") -> None:
-        self.dependencies.add(dependency)
+    def add_predecessor(self, predecessor: "DeclWrapper") -> None:
+        self.predecessors.add(predecessor)
 
     @property
     def alias(self) -> str:
@@ -74,7 +74,7 @@ class DeclWrapper(object):
         self._included = True
         self._exported = export
         if before is not None:
-            before.add_dependency(self)
+            before.add_predecessor(self)
 
     def is_included(self):
         """:return: Whether this declaration is exposed."""
@@ -171,12 +171,12 @@ class StructUnionWrapper(DeclWrapper):
             if child.kind == CursorKind.FIELD_DECL:
                 yield self._index.get(child)
 
-    def include_forward(self, before: DeclWrapper) -> None:
+    def include_forward(self, before: DeclWrapper, export: bool = False) -> None:
         forward_decl = copy.copy(self)
         forward_decl.decl_type = StructDeclType.FORWARD_ONLY
-        forward_decl._exported = False
+        forward_decl._exported = export
         self.decl_type = StructDeclType.DEFINITION_ONLY
-        forward_decl.include(before=before)
+        forward_decl.include(before=before, export=export)
 
 
 class BaseDeclGroup(Iterable[DeclWrapper]):
@@ -289,7 +289,11 @@ class RootDeclGroup(BaseDeclGroup):
         return BaseDeclGroup(
             self,
             self._wrapper_index,
-            lambda c: c.kind == CursorKind.STRUCT_DECL and predicate(c),
+            lambda c:
+                c.kind == CursorKind.STRUCT_DECL
+                and predicate(c)
+                and c.is_definition()
+            ,
         )
 
     def typedef(self, name: str) -> DeclWrapper:
