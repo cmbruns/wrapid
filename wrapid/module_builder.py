@@ -1,7 +1,7 @@
 from clang.cindex import Index, TranslationUnit, TokenKind
 
-from wraptor.decl import RootDeclGroup, TranslationUnitIterable, WrappedDeclIndex
-from wraptor.lib import clang_lib_loader  # noqa
+from wrapid.decl import RootDeclGroup, TranslationUnitIterable, WrappedDeclIndex
+from wrapid.lib import clang_lib_loader  # noqa
 
 
 class ModuleBuilder(object):

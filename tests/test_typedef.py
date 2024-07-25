@@ -2,17 +2,17 @@ import ctypes
 import io
 import unittest
 
-import wraptor
+import wrapid
 from tests.util import import_module_from_string
 
 
 class TypedefTester(unittest.TestCase):
     def test_simple_typedef_ctypes(self):
-        mb = wraptor.ModuleBuilder(
+        mb = wrapid.ModuleBuilder(
             path="data/simple_typedef_input.h",
         )
         mb.typedefs().include()
-        cg = wraptor.CTypesCodeGenerator(mb)
+        cg = wrapid.CTypesCodeGenerator(mb)
         py_code_stream = io.StringIO()
         cg.write_module(py_code_stream)
         py_code = py_code_stream.getvalue()

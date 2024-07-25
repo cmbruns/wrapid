@@ -1,18 +1,18 @@
 import io
 import unittest
 
-import wraptor
+import wrapid
 from tests.util import import_module_from_string
 
 
 class EnumTester(unittest.TestCase):
     def test_simple_enum_ctypes(self):
         file_path = "data/enum_input.h"
-        mb = wraptor.ModuleBuilder(
+        mb = wrapid.ModuleBuilder(
             path=file_path,
         )
         mb.in_header(file_path).enums().include()
-        cg = wraptor.CTypesCodeGenerator(mb)
+        cg = wrapid.CTypesCodeGenerator(mb)
         py_code_stream = io.StringIO()
         cg.write_module(py_code_stream)
         py_code = py_code_stream.getvalue()

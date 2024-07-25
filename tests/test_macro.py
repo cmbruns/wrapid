@@ -1,19 +1,18 @@
-import ctypes
 import io
 import unittest
 
-import wraptor
+import wrapid
 from tests.util import import_module_from_string
 
 
 class MacroTester(unittest.TestCase):
     def test_simple_macro_ctypes(self):
         file_path = "data/simple_macro_definition_input.h"
-        mb = wraptor.ModuleBuilder(
+        mb = wrapid.ModuleBuilder(
             path=file_path,
         )
         mb.in_header(file_path).macros().include()
-        cg = wraptor.CTypesCodeGenerator(mb)
+        cg = wrapid.CTypesCodeGenerator(mb)
         py_code_stream = io.StringIO()
         cg.write_module(py_code_stream)
         py_code = py_code_stream.getvalue()

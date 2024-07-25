@@ -9,9 +9,9 @@ from clang.cindex import (
     TokenKind, TypeKind,
 )
 
-from wraptor import ModuleBuilder
-from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType, VoidType
-from wraptor.decl import DeclWrapper, StructUnionWrapper, StructDeclType
+from wrapid import ModuleBuilder
+from wrapid.ctgen.types import w_type_for_clang_type, WCTypesType, VoidType
+from wrapid.decl import DeclWrapper, StructUnionWrapper, StructDeclType
 
 ICursor = Union[Cursor, DeclWrapper]
 

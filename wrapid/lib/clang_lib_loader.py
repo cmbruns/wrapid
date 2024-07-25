@@ -15,10 +15,10 @@ file_manager = contextlib.ExitStack()
 atexit.register(file_manager.close)
 
 if platform.system() == "Windows":
-    ref = importlib.resources.files("wraptor.lib")/"libclang.dll"
+    ref = importlib.resources.files("wrapid.lib")/"libclang.dll"
 elif platform.system() == "Linux":
     # TODO: don't hardcode this file name
-    ref = importlib.resources.files("wraptor.lib")/"libclang-17.so"
+    ref = importlib.resources.files("wrapid.lib")/"libclang-17.so"
 else:
     raise NotImplementedError
 lib_clang = file_manager.enter_context(importlib.resources.as_file(ref))
