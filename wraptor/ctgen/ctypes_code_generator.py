@@ -1,6 +1,7 @@
 import inspect
 from typing import Union, Callable, Iterator, Optional
 
+from clang.cindex import Type as ClangType
 from clang.cindex import (
     Cursor,
     CursorKind,
@@ -9,15 +10,16 @@ from clang.cindex import (
 )
 
 from wraptor import ModuleBuilder
-from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType
+from wraptor.ctgen.types import w_type_for_clang_type, WCTypesType, VoidType
 from wraptor.decl import DeclWrapper, StructUnionWrapper, StructDeclType
 
 ICursor = Union[Cursor, DeclWrapper]
 
 
 class CTypesCodeGenerator(object):
-    def __init__(self, module_builder: ModuleBuilder):
+    def __init__(self, module_builder: ModuleBuilder, library=None):
         self.module_builder = module_builder
+        self.library = library
         self.imports = dict()
         self.all_section_cursors = set()
         self.unexposed_dependencies = dict()
@@ -64,6 +66,7 @@ class CTypesCodeGenerator(object):
     def coder_for_cursor_kind(self, cursor_kind: CursorKind) -> Callable[[ICursor, int], Iterator[str]]:
         return {
             CursorKind.ENUM_DECL: self.enum_code,
+            CursorKind.FUNCTION_DECL: self.function_code,
             CursorKind.MACRO_DEFINITION: self.macro_code,
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
@@ -106,17 +109,47 @@ class CTypesCodeGenerator(object):
         assert decl.kind == CursorKind.FIELD_DECL
         field_name = decl.alias
         w_type = w_type_for_clang_type(decl.type, decl)
-        # If the field type is a declared type, use the alias, if any, as the name
-        type_cursor = w_type.clang_type.get_declaration()
-        if type_cursor.kind != CursorKind.NO_DECL_FOUND:
-            type_decl = self.module_builder.wrapper_index.get(type_cursor)
-            type_name = type_decl.alias
-        else:
-            type_name = w_type.alias
+        type_name = w_type.alias
+        # If the field type is unnamed and is a declared type, use the alias, if any, as the name
+        if "(unnamed at " in type_name:
+            type_cursor = w_type.clang_type.get_declaration()
+            if type_cursor.kind != CursorKind.NO_DECL_FOUND:
+                type_decl = self.module_builder.wrapper_index.get(type_cursor)
+                type_name = type_decl.alias
         self.load_imports(w_type)
         self.check_dependency(w_type, decl)
         yield from self.above_comment(decl, indent)
         yield from self.right_comment(decl, i + f'("{field_name}", {type_name}),')
+
+    def function_code(self, decl: DeclWrapper, indent=0):
+        i = indent * " "
+        assert decl.kind == CursorKind.FUNCTION_DECL
+        assert self.library is not None
+        lib_name = self.library[0]
+        yield from self.above_comment(decl, indent)
+        yield from self.right_comment(
+            decl,
+            i + f"{decl.alias} = {lib_name}.{decl.name}"
+        )
+        result_type = VoidType(ClangType(TypeKind.VOID.value))
+        parameters = []
+        for c in decl.get_children():
+            if c.kind == CursorKind.TYPE_REF:
+                result_type = w_type_for_clang_type(c.type)
+            elif c.kind == CursorKind.PARM_DECL:
+                parameters.append(c)
+            else:
+                assert False
+        yield i + f"{decl.alias}.restype = {result_type.alias}"
+        if len(parameters) == 0:
+            yield i + f"{decl.alias}.argtypes = []"
+        else:
+            yield i + f"{decl.alias}.argtypes = ["
+            for parameter in parameters:
+                t = w_type_for_clang_type(parameter.type)
+                self.load_imports(t)
+                yield i + f"    {t.alias},"
+            yield i + f"]"
 
     def import_code(self):
         if not self.imports:
@@ -302,6 +335,9 @@ class CTypesCodeGenerator(object):
         # First, accumulate the main body of the generated code in memory,
         # so we can track needed import statements just-in-time
         body_lines = []
+        if self.library is not None:
+            self.set_import("ctypes", "cdll")
+            body_lines.append(f'{self.library[0]} = cdll.LoadLibrary("{self.library[1]}")')
         after = 0  # How many blank lines to append after the last thing emitted
         body_initial_blank_lines = None
         after: Optional[int] = None  # None means don't prepend any blank lines at first

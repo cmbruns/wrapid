@@ -145,6 +145,8 @@ class VoidType(WCTypesType):
 
 
 def w_type_for_clang_type(clang_type: ClangType, parent_declaration: Cursor = None) -> WCTypesType:
+    if clang_type.spelling == "FILE":
+        x = 3
     if clang_type.kind in primitive_ctype_for_clang_type:
         return PrimitiveCTypesType(clang_type, primitive_ctype_for_clang_type[clang_type.kind])
     elif clang_type.kind == TypeKind.CONSTANTARRAY:
@@ -165,10 +167,14 @@ def w_type_for_clang_type(clang_type: ClangType, parent_declaration: Cursor = No
             return PrimitiveCTypesType(clang_type, "c_wchar_p")
         else:
             return PointerType(clang_type)
+    elif clang_type.kind == TypeKind.TYPEDEF:
+        if clang_type.spelling == "size_t":
+            return PrimitiveCTypesType(clang_type, "c_size_t")
+        else:
+            return WCTypesType(clang_type)
     elif clang_type.kind == TypeKind.VOID:
         return VoidType(clang_type)
-    else:
-        return WCTypesType(clang_type)
+    return WCTypesType(clang_type)
 
 
 primitive_ctype_for_clang_type = {

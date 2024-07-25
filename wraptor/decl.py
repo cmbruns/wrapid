@@ -272,6 +272,13 @@ class RootDeclGroup(BaseDeclGroup):
             lambda c: c.kind == CursorKind.ENUM_DECL and predicate(c),
         )
 
+    def functions(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":
+        return BaseDeclGroup(
+            self,
+            self._wrapper_index,
+            lambda c: c.kind == CursorKind.FUNCTION_DECL and predicate(c),
+        )
+
     def macro(self, name: str) -> DeclWrapper:
         return self.macros()._select_single_declaration(
             lambda c:
