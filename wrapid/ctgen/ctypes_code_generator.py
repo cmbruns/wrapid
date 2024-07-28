@@ -365,11 +365,10 @@ class CTypesCodeGenerator(object):
         self.check_dependency(base_type, decl)
         if decl._exported:
             self.add_all_cursor(decl)
+        yield from spacer.pad_to(0)
         yield from self.above_comment(decl, spacer)
         yield from self.right_comment(decl, i + f"{name}: type = {base_type}")
-        # r_comment = self.right_comment(cursor)
-        # pre_comment = i + f"{name}: type = {base_type}"
-        # yield f"{pre_comment}{r_comment}"
+        yield from spacer.end_pad(0)
 
     def union_code(self, decl: StructUnionWrapper, spacer: Spacer):
         assert decl.kind == CursorKind.UNION_DECL
