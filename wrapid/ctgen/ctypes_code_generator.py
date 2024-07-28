@@ -1,5 +1,5 @@
 import inspect
-from typing import Union, Callable, Iterator, Optional
+from typing import Union, Callable, Iterator
 
 from clang.cindex import Type as ClangType
 from clang.cindex import (
@@ -22,6 +22,44 @@ from wrapid.decl import (
 ICursor = Union[Cursor, DeclWrapper]
 
 
+class Indent(object):
+    """Manages indentation during code generation"""
+    def __init__(self, spacer: "Spacer"):
+        self.spacer = spacer
+
+    def __enter__(self):
+        self.spacer.indent_count += 1
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.spacer.indent_count -= 1
+
+
+class Spacer(object):
+    """Manages blank lines and indentation during code generation"""
+    def __init__(self):
+        self.previous_blank_lines = 2  # inhibit initial blank lines by pretending there are already two
+        self.indent_count = 0
+        self._indent_str = "    "
+
+    def indent(self) -> str:
+        return self._indent_str * self.indent_count
+
+    def next_indent(self):
+        return Indent(self)
+
+    def end_pad(self, num_lines: int) -> Iterator[str]:
+        self.previous_blank_lines = num_lines
+        for _ in range(num_lines):
+            yield ""
+
+    def pad_to(self, num_lines: int) -> Iterator[str]:
+        if num_lines <= self.previous_blank_lines:
+            return
+        for _ in range(num_lines - self.previous_blank_lines):
+            yield ""
+
+
 class CTypesCodeGenerator(object):
     def __init__(self, module_builder: ModuleBuilder, library=None):
         self.module_builder = module_builder
@@ -30,11 +68,11 @@ class CTypesCodeGenerator(object):
         self.all_section_cursors = set()
         self.unexposed_dependencies = dict()
 
-    def above_comment(self, cursor, indent: int) -> str:
+    def above_comment(self, cursor, spacer: Spacer) -> str:
         """
         Find comments directly above a declaration in the source file.
         :param cursor: ctypes Cursor object representing the declaration.
-        :param indent: number of spaces cursor is indented in the output
+        :param spacer: number of spaces cursor is indented in the output
         :return: either the empty string, or a python comment string
         """
         tu_ix = self.module_builder.comment_index.get(cursor.translation_unit, None)
@@ -53,23 +91,25 @@ class CTypesCodeGenerator(object):
         assert len(line_ix) == 1
         token = line_ix[0]
         comment = _py_comment_from_token(token)
-        i = " " * indent
+        i = spacer.indent()
         for line in comment.splitlines():
             yield i + line
 
     def add_all_cursor(self, cursor):
         self.all_section_cursors.add(cursor)
 
-    def all_section_code(self):
+    def all_section_code(self, spacer: Spacer):
         if not self.all_section_cursors:
             return
+        yield from spacer.pad_to(1)
         yield "__all__ = ["
         all_items = sorted([c.alias for c in self.all_section_cursors])
         for item in all_items:
             yield f'    "{item}",'
         yield "]"
+        yield from spacer.end_pad(0)
 
-    def coder_for_cursor_kind(self, cursor_kind: CursorKind) -> Callable[[ICursor, int], Iterator[str]]:
+    def coder_for_cursor_kind(self, cursor_kind: CursorKind) -> Callable[[ICursor, Spacer], Iterator[str]]:
         return {
             CursorKind.ENUM_DECL: self.enum_code,
             CursorKind.FUNCTION_DECL: self.function_code,
@@ -80,8 +120,7 @@ class CTypesCodeGenerator(object):
             CursorKind.UNION_DECL: self.union_code,
         }[cursor_kind]
 
-    def enum_code(self, decl: DeclWrapper, indent=0):
-        i = indent * " "
+    def enum_code(self, decl: DeclWrapper, spacer: Spacer):
         assert decl.kind == CursorKind.ENUM_DECL
         self.set_import("enum", "IntFlag")
         if decl._exported:
@@ -91,28 +130,31 @@ class CTypesCodeGenerator(object):
             assert v.kind == CursorKind.ENUM_CONSTANT_DECL
             values.append(v)
         enum_name = decl.alias
-        yield i + f"class {enum_name}(IntFlag):"
-        if len(values) == 0:
-            yield i + "    pass"
-        else:
-            for v in values:
-                yield from self.enum_constant_code(v, indent + 4)
-            # yield i + f"globals().update({enum_name}.__members__)"
-            # Two blank lines for PEP8
-            yield ""
-            yield ""
-            for v in values:
-                constant_name = v.spelling
-                yield i + f"{constant_name} = {enum_name}.{constant_name}"
+        yield from spacer.pad_to(2)
+        yield spacer.indent() + f"class {enum_name}(IntFlag):"
+        with spacer.next_indent():
+            if len(values) == 0:
+                yield spacer.indent() + "pass"
+            else:
+                for v in values:
+                    yield from self.enum_constant_code(v, spacer)
+                # yield i + f"globals().update({enum_name}.__members__)"
+                # Two blank lines for PEP8
+                yield ""
+                yield ""
+        for v in values:
+            constant_name = v.spelling
+            yield spacer.indent() + f"{constant_name} = {enum_name}.{constant_name}"
+        yield from spacer.end_pad(1)
 
     @staticmethod
-    def enum_constant_code(cursor: Cursor, indent=4):
-        i = indent * " "
+    def enum_constant_code(cursor: Cursor, spacer: Spacer):
+        i = spacer.indent()
         assert cursor.kind == CursorKind.ENUM_CONSTANT_DECL
         yield i + f"{cursor.spelling} = {cursor.enum_value}"
 
-    def field_code(self, decl: DeclWrapper, indent=8):
-        i = indent * " "
+    def field_code(self, decl: DeclWrapper, spacer: Spacer):
+        i = spacer.indent()
         assert decl.kind == CursorKind.FIELD_DECL
         field_name = decl.alias
         w_type = w_type_for_clang_type(decl.type, decl)
@@ -125,15 +167,16 @@ class CTypesCodeGenerator(object):
                 type_name = type_decl.alias
         self.load_imports(w_type)
         self.check_dependency(w_type, decl)
-        yield from self.above_comment(decl, indent)
+        yield from self.above_comment(decl, spacer)
         yield from self.right_comment(decl, i + f'("{field_name}", {type_name}),')
 
-    def function_code(self, decl: DeclWrapper, indent=0):
-        i = indent * " "
+    def function_code(self, decl: DeclWrapper, spacer: Spacer):
+        i = spacer.indent()
         assert decl.kind == CursorKind.FUNCTION_DECL
         assert self.library is not None
         lib_name = self.library[0]
-        yield from self.above_comment(decl, indent)
+        yield from spacer.pad_to(1)
+        yield from self.above_comment(decl, spacer)
         yield from self.right_comment(
             decl,
             i + f"{decl.alias} = {lib_name}.{decl.name}"
@@ -152,15 +195,18 @@ class CTypesCodeGenerator(object):
             yield i + f"{decl.alias}.argtypes = []"
         else:
             yield i + f"{decl.alias}.argtypes = ["
-            for parameter in parameters:
-                t = w_type_for_clang_type(parameter.type)
-                self.load_imports(t)
-                yield i + f"    {t.alias},"
+            with spacer.next_indent():
+                for parameter in parameters:
+                    t = w_type_for_clang_type(parameter.type)
+                    self.load_imports(t)
+                    yield spacer.indent() + f"{t.alias},"
             yield i + f"]"
+        yield from spacer.end_pad(1)
 
-    def import_code(self):
+    def import_code(self, spacer: Spacer) -> Iterator[str]:
         if not self.imports:
             return
+        yield from spacer.pad_to(1)
         for module in self.imports:
             if len(self.imports[module]) < 5:
                 yield f"from {module} import {', '.join(sorted(self.imports[module]))}"
@@ -169,6 +215,7 @@ class CTypesCodeGenerator(object):
                 for item in sorted(self.imports[module]):
                     yield f"    {item},"
                 yield ")"
+        yield from spacer.end_pad(1)
 
     def right_comment(self, cursor: ICursor, non_comment_code: str) -> Iterator[str]:
         """
@@ -216,8 +263,7 @@ class CTypesCodeGenerator(object):
         for module, item in w_type.imports():
             self.set_import(module, item)
 
-    def macro_code(self, cursor: Cursor, indent=0):
-        i = indent * " "
+    def macro_code(self, cursor: Cursor, spacer: Spacer):
         assert cursor.kind == CursorKind.MACRO_DEFINITION
         macro_name = cursor.spelling
         tokens = list(cursor.get_tokens())[1:]  # skip the first token, which is the macro name
@@ -234,15 +280,20 @@ class CTypesCodeGenerator(object):
                 return  # TODO: unexplored case
         # TODO: but only if exported...
         self.add_all_cursor(cursor)
-        yield from self.above_comment(cursor, indent)
+        yield from spacer.pad_to(0)
+        yield from self.above_comment(cursor, spacer)
+        i = spacer.indent()
         yield from self.right_comment(cursor, i + f'{macro_name} = {rhs}')
+        yield from spacer.end_pad(0)
 
-    def opaque_code(self, decl: OpaqueWrapper, indent=0):
-        i = indent * " "
+    def opaque_code(self, decl: OpaqueWrapper, spacer: Spacer):
+        yield from spacer.pad_to(2)
+        i = spacer.indent()
         yield i + "# Opaque type"
         self.set_import("ctypes", "Structure")
         yield i + f"class {decl.alias}(Structure):"
         yield i + "    pass"
+        yield from spacer.end_pad(2)
 
     def set_import(self, import_module: str, import_name: str):
         """
@@ -250,13 +301,14 @@ class CTypesCodeGenerator(object):
         """
         self.imports.setdefault(import_module, set()).add(import_name)
 
-    def struct_code(self, cursor: DeclWrapper, indent=0):
-        assert cursor.kind == CursorKind.STRUCT_DECL
-        yield from self._struct_union_code(cursor, "Structure", indent)
+    def struct_code(self, decl: StructUnionWrapper, spacer: Spacer):
+        assert decl.kind == CursorKind.STRUCT_DECL
+        yield from self._struct_union_code(decl, spacer, "Structure")
 
-    def _struct_union_code(self, decl: StructUnionWrapper, ctypes_type_name: str = "Structure", indent=0):
-        i = indent * " "
+    def _struct_union_code(self, decl: StructUnionWrapper, spacer: Spacer, ctypes_type_name: str = "Structure"):
+        i = spacer.indent()
         fields = list(decl.fields())
+        yield from spacer.pad_to(2)
         if decl.decl_type == StructDeclType.FORWARD_ONLY:
             if len(fields) > 0:
                 yield i + "# Forward declaration. Definition of _fields_ will appear later."
@@ -264,7 +316,8 @@ class CTypesCodeGenerator(object):
                 yield i + "# Forward declaration"
             self.set_import("ctypes", ctypes_type_name)
             yield i + f"class {decl.alias}({ctypes_type_name}):"
-            yield i + "    pass"
+            with spacer.next_indent():
+                yield spacer.indent() + "pass"
         else:
             if decl.decl_type == StructDeclType.DEFINITION_ONLY:
                 if len(fields) > 0:
@@ -272,20 +325,24 @@ class CTypesCodeGenerator(object):
             elif decl.decl_type == StructDeclType.FULL:
                 self.set_import("ctypes", ctypes_type_name)
                 yield i + f"class {decl.alias}({ctypes_type_name}):"
-                if len(fields) > 0:
-                    yield i + "    _fields_ = ("
-                else:
-                    yield i + "    pass"
+                with spacer.next_indent():
+                    if len(fields) > 0:
+                        yield spacer.indent() + "_fields_ = ("
+                    else:
+                        yield spacer.indent() + "pass"
             else:
                 raise NotImplementedError
-            for index, field in enumerate(fields):
-                if index > 0:
-                    yield ""  # blank line between fields
-                yield from self.field_code(field, indent + 8)
-            if len(fields) > 0:
-                yield i + f"    )"
+            with spacer.next_indent():
+                with spacer.next_indent():
+                    for index, field in enumerate(fields):
+                        if index > 0:
+                            yield ""  # blank line between fields
+                        yield from self.field_code(field, spacer)
+                if len(fields) > 0:
+                    yield spacer.indent() + ")"
         if decl._exported:
             self.add_all_cursor(decl)
+        yield from spacer.end_pad(2)
 
     def check_dependency(self, wc_type: WCTypesType, depender: Cursor):
         for dependee in wc_type.dependencies():
@@ -297,8 +354,8 @@ class CTypesCodeGenerator(object):
             _dependee, dependers = self.unexposed_dependencies.setdefault(dependee.hash, (dependee, dict()))
             dependers[depender.hash] = depender
 
-    def typedef_code(self, decl: DeclWrapper, indent=0):
-        i = indent * " "
+    def typedef_code(self, decl: DeclWrapper, spacer: Spacer):
+        i = spacer.indent()
         name = decl.alias
         # TODO: warn if base_type is not exposed
         base_type = w_type_for_clang_type(decl.underlying_typedef_type, decl)
@@ -308,77 +365,59 @@ class CTypesCodeGenerator(object):
         self.check_dependency(base_type, decl)
         if decl._exported:
             self.add_all_cursor(decl)
-        yield from self.above_comment(decl, indent)
+        yield from self.above_comment(decl, spacer)
         yield from self.right_comment(decl, i + f"{name}: type = {base_type}")
         # r_comment = self.right_comment(cursor)
         # pre_comment = i + f"{name}: type = {base_type}"
         # yield f"{pre_comment}{r_comment}"
 
-    def union_code(self, cursor: DeclWrapper, indent=0):
-        assert cursor.kind == CursorKind.UNION_DECL
-        yield from self._struct_union_code(cursor, "Union", indent)
+    def union_code(self, decl: StructUnionWrapper, spacer: Spacer):
+        assert decl.kind == CursorKind.UNION_DECL
+        yield from self._struct_union_code(decl, spacer, "Union")
 
     # Factor out generating one cursor's lines, to help with
     # automated dependency/before generation
-    def _write_declaration(self, decl: DeclWrapper, min_blank_lines_before: Optional[int], lines: list) -> (int, int):
-        min_blank_lines_after = min_blank_lines_before  # in case implementation is empty
+    def _write_declaration(self, decl: DeclWrapper, spacer: Spacer) -> Iterator[str]:
         for dep in decl.predecessors:
             if dep is decl:
                 continue
             # TODO: check if its already exported first
-            min_blank_lines_before, min_blank_lines_after = self._write_declaration(dep, min_blank_lines_before, lines)
+            yield from self._write_declaration(dep, spacer)
         coder = self.coder_for_cursor_kind(decl.kind)
-        for index, line in enumerate(coder(decl, 0)):
-            if index == 0:
-                # Insert blank lines before declaration according to PEP8 and CursorType
-                if min_blank_lines_before is None:  # special signal to NOT prepend any blank lines
-                    # Remember how many blank lines the very first body element prefers
-                    min_blank_lines_before = _blank_lines(decl)
-                else:
-                    blank_lines_count = max(min_blank_lines_before, _blank_lines(decl))
-                    for _ in range(blank_lines_count):
-                        lines.append("")
-                min_blank_lines_after = _blank_lines(decl)
-            lines.append(line)
-        return min_blank_lines_before, min_blank_lines_after
+        yield from coder(decl, spacer)
 
     def write_module(self, file):
         self.imports.clear()
         self.all_section_cursors.clear()
         self.unexposed_dependencies.clear()
+        body_spacer = Spacer()
+        body_spacer.previous_blank_lines = 0  # Begin assuming something comes before the body
         # First, accumulate the main body of the generated code in memory,
         # so we can track needed import statements just-in-time
         body_lines = []
         if self.library is not None:
             self.set_import("ctypes", "cdll")
+            body_spacer.pad_to(0)
             body_lines.append(f'{self.library[0]} = cdll.LoadLibrary("{self.library[1]}")')
-        after = 0  # How many blank lines to append after the last thing emitted
-        body_initial_blank_lines = None
-        after: Optional[int] = None  # None means don't prepend any blank lines at first
+            body_spacer.end_pad(0)
         for decl in self.module_builder.included():
-            before, after = self._write_declaration(decl, after, body_lines)
-            if body_initial_blank_lines is None and before is not None:
-                body_initial_blank_lines = before
+            for line in self._write_declaration(decl, body_spacer):
+                body_lines.append(line)
         # Now start printing lines for real
         # import statements
-        import_blank_lines = 0  # number of blank lines to insert after imports
-        if body_initial_blank_lines is None:
-            body_initial_blank_lines = 0
-        for line in self.import_code():
-            # Emit at least one blank line after imports
-            import_blank_lines = max(1, body_initial_blank_lines)
+        spacer = Spacer()
+        prev_line = None
+        for line in self.import_code(spacer):
             print(line, file=file)
-        for _ in range(import_blank_lines):
-            print("", file=file)
+            prev_line = line
         # main body of code
+        # special case for boundary between imports and body
+        if prev_line == "" and body_lines[0] == "":
+            del body_lines[0]
         for line in body_lines:
             print(line, file=file)
         # __all__ stanza
-        for index, line in enumerate(self.all_section_code()):
-            if index == 0:
-                # Emit at least one blank line before the __all__ stanza
-                for _ in range(max(1, after)):
-                    print("", file=file)
+        for index, line in enumerate(self.all_section_code(body_spacer)):
             print(line, file=file)
         file.flush()
         # Warn about unexposed dependencies
@@ -391,24 +430,6 @@ class CTypesCodeGenerator(object):
                 > "NameError: name is not defined" run time error.
                 > Declarations: [{', '.join(sorted([c.spelling for c in dependers.values()]))}]
             """))
-
-
-def _blank_lines(cursor: ICursor) -> int:
-    """PEP8 blank lines by declaration type"""
-    if cursor.kind in [
-        CursorKind.CLASS_DECL,
-        CursorKind.ENUM_DECL,
-        CursorKind.FUNCTION_DECL,
-        CursorKind.STRUCT_DECL,
-        CursorKind.UNION_DECL,
-    ]:
-        return 2
-    if cursor.kind in [
-        CursorKind.CONSTRUCTOR,
-        CursorKind.CXX_METHOD,
-    ]:
-        return 1
-    return 0
 
 
 def _py_comment_from_token(token: Token):
