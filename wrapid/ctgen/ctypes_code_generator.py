@@ -11,7 +11,13 @@ from clang.cindex import (
 
 from wrapid import ModuleBuilder
 from wrapid.ctgen.types import w_type_for_clang_type, WCTypesType, VoidType
-from wrapid.decl import DeclWrapper, StructUnionWrapper, StructDeclType
+from wrapid.decl import (
+    DeclWrapper,
+    OpaqueKind,
+    OpaqueWrapper,
+    StructUnionWrapper,
+    StructDeclType,
+)
 
 ICursor = Union[Cursor, DeclWrapper]
 
@@ -68,6 +74,7 @@ class CTypesCodeGenerator(object):
             CursorKind.ENUM_DECL: self.enum_code,
             CursorKind.FUNCTION_DECL: self.function_code,
             CursorKind.MACRO_DEFINITION: self.macro_code,
+            OpaqueKind: self.opaque_code,
             CursorKind.STRUCT_DECL: self.struct_code,
             CursorKind.TYPEDEF_DECL: self.typedef_code,
             CursorKind.UNION_DECL: self.union_code,
@@ -229,6 +236,13 @@ class CTypesCodeGenerator(object):
         self.add_all_cursor(cursor)
         yield from self.above_comment(cursor, indent)
         yield from self.right_comment(cursor, i + f'{macro_name} = {rhs}')
+
+    def opaque_code(self, decl: OpaqueWrapper, indent=0):
+        i = indent * " "
+        yield i + "# Opaque type"
+        self.set_import("ctypes", "Structure")
+        yield i + f"class {decl.alias}(Structure):"
+        yield i + "    pass"
 
     def set_import(self, import_module: str, import_name: str):
         """

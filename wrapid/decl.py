@@ -22,6 +22,10 @@ class WrappedDeclIndex(object):
     def get(self, cursor: Cursor) -> "DeclWrapper":
         if cursor.kind == CursorKind.FIELD_DECL:
             return self._index.setdefault(self._cursor_key(cursor), FieldWrapper(cursor, self))
+        elif cursor.kind == CursorKind.FUNCTION_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), FunctionWrapper(cursor, self))
+        elif cursor.kind == CursorKind.PARM_DECL:
+            return self._index.setdefault(self._cursor_key(cursor), ParameterWrapper(cursor, self))
         elif cursor.kind == CursorKind.STRUCT_DECL:
             return self._index.setdefault(self._cursor_key(cursor), StructUnionWrapper(cursor, self))
         elif cursor.kind == CursorKind.TYPEDEF_DECL:
@@ -78,6 +82,15 @@ class DeclWrapper(object):
         if before is not None:
             before.add_predecessor(self)
 
+    def include_opaque_type(self, before: "DeclWrapper", export: bool = False) -> None:
+        """Create a forward declaration for an opaque type"""
+        assert self.type.kind == TypeKind.POINTER
+        pointee = self.type.get_pointee()
+        decl = pointee.get_declaration()
+        assert decl.kind != CursorKind.NO_DECL_FOUND
+        forward_decl = OpaqueWrapper(decl, self._index)
+        forward_decl.include(before=before, export=export)
+
     def is_included(self):
         """:return: Whether this declaration is exposed."""
         return self._included
@@ -99,6 +112,13 @@ class DeclWrapper(object):
         return f"{self._cursor.spelling}"
 
 
+Predicate = [Callable[[DeclWrapper], bool]]
+
+
+def everything_predicate(_cursor: DeclWrapper) -> bool:
+    return True
+
+
 class FieldWrapper(DeclWrapper):
     def field_type(self) -> DeclWrapper:
         clang_type = self.type
@@ -110,11 +130,25 @@ class FieldWrapper(DeclWrapper):
         return self._index.get(clang_cursor)
 
 
-Predicate = [Callable[[DeclWrapper], bool]]
+class FunctionWrapper(DeclWrapper):
+    def parameters(self) -> Iterator["ParameterWrapper"]:
+        for child in self.get_children():
+            if child.kind == CursorKind.PARM_DECL:
+                yield self._index.get(child)
 
 
-def everything_predicate(_cursor: DeclWrapper) -> bool:
-    return True
+OpaqueKind = -1234
+
+
+class OpaqueWrapper(DeclWrapper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kind = OpaqueKind
+
+
+class ParameterWrapper(DeclWrapper):
+    def type_decl(self) -> DeclWrapper:
+        return self._index.get(self.type.get_declaration())
 
 
 class TranslationUnitIterable(object):
@@ -272,6 +306,11 @@ class RootDeclGroup(BaseDeclGroup):
             lambda c: c.kind == CursorKind.ENUM_DECL and predicate(c),
         )
 
+    def function(self, name: str) -> DeclWrapper:
+        return self.functions()._select_single_declaration(
+            lambda c: c.spelling == name
+        )
+
     def functions(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":
         return BaseDeclGroup(
             self,
@@ -281,8 +320,7 @@ class RootDeclGroup(BaseDeclGroup):
 
     def macro(self, name: str) -> DeclWrapper:
         return self.macros()._select_single_declaration(
-            lambda c:
-            c.spelling == name
+            lambda c: c.spelling == name
         )
 
     def macros(self, predicate: Predicate = everything_predicate) -> "BaseDeclGroup":

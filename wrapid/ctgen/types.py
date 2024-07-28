@@ -1,4 +1,4 @@
-from typing import Iterator, Optional
+from typing import Iterator
 from clang.cindex import Type as ClangType
 from clang.cindex import Cursor, CursorKind, TokenKind, TypeKind
 
@@ -145,8 +145,6 @@ class VoidType(WCTypesType):
 
 
 def w_type_for_clang_type(clang_type: ClangType, parent_declaration: Cursor = None) -> WCTypesType:
-    if clang_type.spelling == "FILE":
-        x = 3
     if clang_type.kind in primitive_ctype_for_clang_type:
         return PrimitiveCTypesType(clang_type, primitive_ctype_for_clang_type[clang_type.kind])
     elif clang_type.kind == TypeKind.CONSTANTARRAY:
